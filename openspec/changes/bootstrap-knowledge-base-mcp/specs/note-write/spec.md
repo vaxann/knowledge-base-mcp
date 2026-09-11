@@ -20,7 +20,7 @@ The server SHALL provide `kb_create_note(path, content, frontmatter, overwrite)`
 - **THEN** the call fails with code `invalid_path`
 
 ### Requirement: Replace note content with optimistic concurrency
-The server SHALL provide `kb_replace_note(path, content, etag)` that replaces the whole file. WHEN `etag` is provided and does not match the current content hash, the call MUST fail with code `conflict` and MUST NOT modify the file. Frontmatter in `content` MUST be valid YAML or the call fails with `invalid_frontmatter`.
+The server SHALL provide `kb_replace_note(path, content, etag)` that replaces the whole file. WHEN `etag` is provided and does not match the current content hash, the call MUST fail with code `conflict` and MUST NOT modify the file. WHEN the frontmatter in `content` is not valid YAML, the write still succeeds and the result carries a `warnings` entry, because content is the client's responsibility.
 
 #### Scenario: Matching etag
 - **WHEN** the supplied `etag` equals the current hash
@@ -30,8 +30,12 @@ The server SHALL provide `kb_replace_note(path, content, etag)` that replaces th
 - **WHEN** another client changed the note after the `etag` was obtained
 - **THEN** the call fails with code `conflict` and the file is unchanged
 
+#### Scenario: Unparseable frontmatter
+- **WHEN** the new content starts with a `---` block that is not valid YAML
+- **THEN** the file is written and committed, and the result contains a warning naming the offending line
+
 ### Requirement: Patch a note with atomic operations
-The server SHALL provide `kb_patch_note(path, operations, etag)` applying an ordered list of operations atomically (all or none): `append`, `prepend`, `replace_section(heading, content)`, `insert_after_heading(heading, content)`, `set_frontmatter(fields)` (merge, keeping other keys), `remove_frontmatter(keys)`, and `find_replace(find, replace, all)`. A failed operation (for example a missing heading) MUST fail the whole call with code `patch_failed` and leave the file unchanged.
+The server SHALL provide `kb_patch_note(path, operations, etag)` applying an ordered list of operations atomically (all or none): `append`, `prepend`, `replace_section(heading, content)`, `insert_after_heading(heading, content)`, `set_frontmatter(fields)` (merge, keeping other keys), `remove_frontmatter(keys)`, and `find_replace(find, replace, all)`. A failed operation (for example a missing heading, or a frontmatter operation on a note whose frontmatter cannot be parsed) MUST fail the whole call with code `patch_failed` and leave the file unchanged. When the server serialises frontmatter itself, it MUST quote scalars that would otherwise be ambiguous so the header round-trips through YAML unchanged.
 
 #### Scenario: Frontmatter-only edit
 - **WHEN** a client applies `set_frontmatter({status: done})`

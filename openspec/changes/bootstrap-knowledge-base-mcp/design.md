@@ -2,7 +2,7 @@
 
 See proposal.md for motivation. Constraints that shape the design:
 
-- The vault is an Obsidian-compatible Markdown tree: YAML frontmatter, `[[wikilinks]]`, `#tags`, per-folder conventions documented for humans, and many binary attachments (PDF, images, Office files) next to notes.
+- The vault is a plain Markdown tree as produced by Obsidian, Logseq or by hand: optional YAML frontmatter, `[[wikilinks]]`, `#tags`, and many binary attachments (PDF, images, Office files) next to notes. The server understands these conventions but does not depend on any editor and imposes no structure on content.
 - Notes may mix Cyrillic and Latin content, so tokenisation and stemming must handle both.
 - Target size: on the order of 1,000–10,000 notes, with attachments that can make the repository hundreds of MB, so the index must never scan binaries.
 - Deployment model: each server instance runs next to its MCP client, typically as a container on a different machine from where humans edit the vault. Every instance owns a private clone and nothing else writes to that work tree. The Git remote (GitHub) is the only shared state; humans keep editing in their own clones. Several instances may be alive at once.
@@ -14,8 +14,8 @@ See proposal.md for motivation. Constraints that shape the design:
 **Goals:**
 - Single static binary and a small container image, zero external services.
 - Search that feels instant to an LLM client (p95 ≤ 100 ms warm) and stays fresh through pulls without manual reindexing.
-- Every write is safe: sandboxed path, validated frontmatter and schema, one commit, never a lost edit even when conflicts are resolved automatically.
-- Behavior fully covered by the specs; implementation swappable behind small interfaces (index, git, validator).
+- Every write is safe: sandboxed path, one commit, never a lost edit; conflicts are made visible instead of being decided by the server.
+- Behavior fully covered by the specs; implementation swappable behind small interfaces (index, git).
 
 **Non-Goals:**
 - Replacing Obsidian sync or being a general Git UI.
@@ -37,23 +37,23 @@ Shelling out reuses SSH agent/keys, credential helpers, `includeIf` configs, sig
 *Alternatives:* go-git (pure Go, but SSH/credential edge cases and slow on large trees); libgit2 bindings (cgo).
 
 ### D4. Frontmatter parsing with `gopkg.in/yaml.v3` Node API
-Using the Node API instead of `map[string]any` preserves key order, comments and scalar styles on round-trip, so `set_frontmatter` edits do not rewrite the whole header. Serialisation always quotes ambiguous scalars (values with `: `, `#`, leading `*`/`&`, `yes/no/on/off`, numeric-looking strings) so Dataview keeps parsing the card. The body is stored as raw bytes; line endings are detected and preserved.
+Using the Node API instead of `map[string]any` preserves key order, comments and scalar styles on round-trip, so `set_frontmatter` edits do not rewrite the whole header. Serialisation always quotes ambiguous scalars (values with `: `, `#`, leading `*`/`&`, `yes/no/on/off`, numeric-looking strings) so editors keep parsing the header. Unparseable frontmatter is tolerated on read and on whole-file writes (reported as a warning) and only blocks frontmatter-level patch operations. The body is stored as raw bytes; line endings are detected and preserved.
 *Alternatives:* `adrg/frontmatter` (loses order); custom parser (unnecessary).
 
-### D5. Write path: lock → pull (if stale) → validate → mutate → commit → index → debounced push
-A single vault-level mutex serializes writes and sync. Before mutating, the server integrates the remote unless a pull succeeded within the freshness window, so the write lands on the latest remote state. Validation (YAML + schema) runs on the would-be result before anything touches disk. File write and `git commit` happen inside the lock; the index update is synchronous so the note is searchable when the tool returns; push is asynchronous, debounced and retried. Optimistic concurrency uses a content hash (`etag`) returned by read tools and checked by write tools.
+### D5. Write path: lock → pull (if stale) → mutate → commit → index → debounced push
+A single vault-level mutex serializes writes and sync. Before mutating, the server integrates the remote unless a pull succeeded within the freshness window, so the write lands on the latest remote state. File write and `git commit` happen inside the lock; the index update is synchronous so the note is searchable when the tool returns; push is asynchronous, debounced and retried. Optimistic concurrency uses a content hash (`etag`) returned by read tools and checked by write tools.
 
 ### D6. Freshness comes only from the server's own writes and from pulls
 Because the clone is private to the instance, there is no filesystem watcher. After every pull the server diffs the previous and new `HEAD` (`git diff --name-status`) and upserts/deletes exactly those documents. A full rescan runs on startup when the index is empty or its recorded revision differs from `HEAD`.
 *Alternative:* fsnotify (rejected: unnecessary complexity for a clone nobody else touches; unreliable in containers and on network volumes).
 
-### D7. Conflicts are resolved automatically, losing side becomes a sibling note
-Integration is `git pull --rebase`. When a file conflicts while replaying a server commit, the resolver applies the configured strategy per file: with `remote-wins` (default) it checks out the upstream side, extracts the replayed commit's version (`git show <commit>:<path>`) and writes it as `<stem>.conflict-<short hash>.md` next to the note, stages both and continues the rebase. Delete/modify conflicts are handled the same way. The result is linear history with an explicit, searchable record of what was overridden; a client can merge it later with `kb_patch_note` and delete the sibling. Human edits win by default because a human is not going to re-read the vault for a lost change, an agent can.
-*Alternatives:* stop and wait for a human (rejected by the maintainer: instances are unattended); `local-wins` (available as an option); three-way merge via an LLM inside the server (out of scope, no LLM in the server).
+### D7. Conflicts are committed with Git's markers, resolution is the client's job
+Integration is `git pull --no-rebase` (a merge). When Git reports conflicts, the server stages the work tree as-is, so conflicted files keep the standard `<<<<<<< / ======= / >>>>>>>` markers, commits the merge with the conflicted paths in the message, and pushes. Nothing is lost: both sides are in the file, and the merge commit has both parents. The server then treats such a note like any other, with `kb_sync_status.conflicts` (and a trivial `kb_grep`) exposing it. Crucially, the model that is trying to save is told immediately: a write whose pre-pull conflicted on the target note is refused with `merge_conflict` and both sides of the conflict, and a stale-`etag` `conflict` error carries the current content, so the calling model resolves the conflict itself and saves a clean version. The `ours`/`theirs` sides come from `git show :2:<path>` and `:3:<path>` captured before the merge is committed. Merge commits in history are accepted as the price of never picking a side.
+*Alternatives:* rebase with a per-file winner and a sibling conflict note (rejected: the server would decide which edit wins); stop and wait for a human (rejected: instances are unattended); a three-way merge by an LLM inside the server (out of scope).
 
-### D8. Link resolution follows Obsidian rules; the server never rewrites links
+### D8. Link resolution follows common wikilink rules; the server never rewrites links
 Wikilinks resolve by shortest unique path (basename first, then relative path), support `|alias`, `#heading` and `^block` suffixes, and are case-insensitive on case-insensitive filesystems. Resolution is used for backlinks and for reporting which notes reference a moved note. Rewriting links is left to the client: it can `kb_grep` for the old name and `kb_patch_note` each file, keeping every edit explicit in history.
-*Alternative:* Obsidian-style automatic rewriting (rejected: hidden multi-file edits, ambiguity when several notes share a basename).
+*Alternative:* editor-style automatic rewriting (rejected: hidden multi-file edits, ambiguity when several notes share a basename).
 
 ### D9. Grep is a second, index-free search path
 `kb_grep` walks visible notes concurrently and matches literally or with RE2 (`regexp`), skipping binaries by extension and size. For vaults of a few thousand notes a parallel scan is well under the latency budget, so no trigram index is needed. In phase 2 the same walk will include cached extracted text of attachments.
@@ -61,24 +61,19 @@ Wikilinks resolve by shortest unique path (basename first, then relative path), 
 
 ### D10. Deletion is permanent; Git is the trash
 `kb_delete_note` removes the file and commits. Recovery is `kb_ls_tree` / `kb_show_revision` / `kb_restore` over Git history, which also covers notes deleted or renamed by other clones. Following renames in `kb_history` uses `git log --follow`.
-*Alternative:* Obsidian-style `.trash/` (rejected: duplicates Git and leaks deleted content into listings and search).
+*Alternative:* an editor-style `.trash/` folder (rejected: duplicates Git and leaks deleted content into listings and search).
 
 ### D11. No templates in the server
 Templates are ordinary notes in a folder the user chooses; a client reads one with `kb_get_note` and passes the filled content to `kb_create_note`.
 
-### D12. Schemas live in the vault as `_schema.yaml`
-Folder conventions already live next to the notes (human-readable README files). A machine-readable `_schema.yaml` beside them keeps validation rules versioned with the data, editable through the same tools, and identical for every instance. The format is a small JSON-Schema-like subset (required, typed properties, enum, pattern, filename pattern) implemented directly rather than pulling a full JSON Schema library. Schema files are cached in memory and invalidated when a write or pull touches them.
-*Alternatives:* schemas in server config (rejected: drift between instances and vault); full JSON Schema (rejected: heavier than needed, poor error messages for LLM consumers).
-
-### D13. stdio only, packaged as a container
-No HTTP listener: every client launches its own instance (`docker run -i ghcr.io/…` or the binary) and the remote is the rendezvous point. The image is a distroless/alpine base with `git` and `openssh-client`; volumes for the clone and the index; credentials via a read-only mounted SSH key (`GIT_SSH_COMMAND` set by the entrypoint) or an HTTPS token consumed by a Git credential helper configured at start. Removing HTTP removes the whole auth surface from the server.
+### D12. stdio only, packaged as a multi-arch container
+No HTTP listener: every client launches its own instance (`docker run -i ghcr.io/…` or the binary) and the remote is the rendezvous point. The image is an alpine base with `git` and `openssh-client`, built for `linux/amd64` and `linux/arm64`; volumes for the clone and the index; credentials via a read-only mounted SSH key (`GIT_SSH_COMMAND` set by the entrypoint) or an HTTPS token consumed by a Git credential helper configured at start. Both paths are first-class and covered by tests. Removing HTTP removes the whole auth surface from the server.
 *Alternative:* streamable HTTP with bearer tokens (rejected by the maintainer as unnecessary; can be revisited as a separate change).
 
-### D14. Tool surface (v1)
+### D13. Tool surface (v1)
 Read: `kb_get_note`, `kb_get_section`, `kb_list`, `kb_backlinks`, `kb_tags`.
 Search: `kb_search`, `kb_grep`, `kb_query`, `kb_context`, `kb_quick_open`.
 Write: `kb_create_note`, `kb_replace_note`, `kb_patch_note`, `kb_move_note`, `kb_delete_note`.
-Validation: `kb_validate`.
 Git: `kb_log`, `kb_history`, `kb_ls_tree`, `kb_show_revision`, `kb_diff`, `kb_restore`, `kb_sync_status`, `kb_sync_now`.
 Ops: `kb_info`, `kb_reindex`.
 Resources: `kb://note/<path>` (Markdown), `kb://folder/<path>` (listing).
@@ -86,18 +81,17 @@ Resources: `kb://note/<path>` (Markdown), `kb://folder/<path>` (listing).
 ## Risks / Trade-offs
 
 - [Bleve index size and rebuild time on 10k notes] → benchmark early with a generated fixture; index only fields needed for ranking and snippets; rebuild is incremental after first run.
-- [Automatic resolution hides a bad merge] → the losing version is always preserved as a sibling note and reported in `kb_sync_status`; tool descriptions tell clients to check `last_conflicts`.
-- [Two instances editing the same note within seconds] → pull-before-write with a short freshness window shrinks the race; the rare loser is preserved as a conflict note.
-- [Sibling conflict notes accumulate] → `kb_validate` and `kb_query` can list them (`path` glob `*.conflict-*`); a cleanup task is a client decision.
+- [Conflict markers get pushed and show up in human editors] → accepted by the maintainer; markers are the standard Git signal, `kb_sync_status.conflicts` and tool descriptions push clients to resolve them promptly.
+- [Two instances editing the same note within seconds] → pull-before-write with a short freshness window shrinks the race; a real collision becomes a marked conflict, never a lost edit.
+- [Conflict markers inside frontmatter break parsing] → reads tolerate unparseable frontmatter (`frontmatter_error`), search still indexes the body, so the note stays findable and fixable.
 - [Push storms from many small edits] → debounce (5 s default) and coalesce; commits remain granular.
 - [Credentials inside a container] → key mounted read-only, never copied, never logged; documented threat model.
 - [Russian stemming quality] → Snowball is adequate for ranked search; `kb_grep` gives exact matching when stemming gets in the way.
 - [Client forgets to fix links after a rename] → `kb_move_note` returns `referencing_notes`; tool description tells the model to review them.
-- [Schema too strict blocks useful writes] → `warn` mode and folder-scoped schemas; schemas are editable through the server itself.
 
 ## Migration Plan
 
-Greenfield. Deployment is an image plus environment variables; rollback is stopping the container. The index can be deleted at any time and is rebuilt on start. The vault repository is never modified in a non-additive way, so switching the server off leaves a normal Git clone behind. Existing prose conventions can be turned into `_schema.yaml` files gradually; folders without a schema get YAML-only validation.
+Greenfield. Deployment is an image plus environment variables; rollback is stopping the container. The index can be deleted at any time and is rebuilt on start. The vault repository is never modified in a non-additive way, so switching the server off leaves a normal Git clone behind.
 
 ## Open Questions
 

@@ -1,7 +1,7 @@
 # Knowledge Base MCP — guidance for AI coding agents
 
 ## Project
-Go MCP server exposing a Git-backed, Obsidian-compatible Markdown vault: search, read, write, versioning.
+Go MCP server exposing a Git-backed folder of Markdown notes (Obsidian/Logseq vault or plain tree): search, read, write, versioning. Editor-agnostic: understands frontmatter, wikilinks and tags, imposes no structure on content.
 Module: `github.com/vaxann/knowledge-base-mcp`. Go 1.26+.
 
 ## Workflow

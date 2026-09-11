@@ -1,6 +1,6 @@
 # Knowledge Base MCP
 
-An [MCP](https://modelcontextprotocol.io) server, written in Go, that gives AI assistants fast, versioned access to a personal knowledge base kept as an Obsidian‑compatible Markdown vault inside a Git repository.
+An [MCP](https://modelcontextprotocol.io) server, written in Go, that gives AI assistants fast, versioned access to a personal knowledge base kept as a folder of Markdown files inside a Git repository. Works with an Obsidian or Logseq vault or any plain Markdown tree; the server understands frontmatter, wikilinks and tags but imposes no structure on your content.
 
 > **Status:** design phase. The requirements live in [`openspec/`](openspec/) and are being refined before implementation starts. Nothing is runnable yet.
 
@@ -10,8 +10,7 @@ An [MCP](https://modelcontextprotocol.io) server, written in Go, that gives AI a
 - **Read notes** — get a note with parsed YAML frontmatter, headings, tags, outgoing links and backlinks; list folders; query notes by frontmatter fields (Dataview‑style).
 - **Edit notes** — create, replace or patch content (append, replace a section, set frontmatter keys), rename and delete, with optimistic concurrency. The server is a data-access layer: no templates, no magic link rewriting, the calling model stays in control.
 - **Versioning for free** — every change is an atomic Git commit under a dedicated author on `main`; the server pulls and pushes automatically and lets clients walk the log, list the tree at any revision, read and diff old versions (deleted notes included) and restore them. History is never rewritten.
-- **Runs anywhere your agent runs** — stdio only, as a binary or a container. Every client gets its own instance with a private clone; the Git remote is the only shared state, and conflicts are resolved automatically without losing either side.
-- **Consistent cards** — frontmatter must be valid YAML on every write, and folders can carry a `_schema.yaml` (required fields, enums, file-name pattern) that the server enforces or warns about.
+- **Runs anywhere your agent runs** — stdio only, as a binary or a multi-arch container (amd64, arm64). Every client gets its own instance with a private clone; the Git remote is the only shared state. Merge conflicts are committed with Git's standard markers, and the agent that is saving gets both sides back in the tool result, so it resolves the conflict itself and nothing is ever lost.
 - **Safe by default** — vault‑relative paths only, deny‑listed folders (`.obsidian/`, `.git/`, …), read‑only mode, no note content or secrets in logs.
 
 ## Architecture at a glance
@@ -24,7 +23,6 @@ MCP client (Claude, Cursor, custom agent)
 │  knowledge-base-mcp (Go)      │   (binary or container)
 │  ├─ tools: kb_search, kb_get… │
 │  ├─ vault: frontmatter, links │
-│  ├─ schema: YAML + _schema    │
 │  ├─ index: full-text (Bleve)  │
 │  └─ git: commit / pull / push │
 └───────────────┬───────────────┘
@@ -38,8 +36,7 @@ MCP client (Claude, Cursor, custom agent)
 |-------------------|------------------------------------------------------|
 | `KB_VAULT_PATH`   | Local Git clone of the vault (required)              |
 | `KB_GIT_REMOTE`   | Remote URL used to bootstrap‑clone if path is empty  |
-| `KB_GIT_CONFLICT` | `remote-wins` (default) or `local-wins`              |
-| `KB_SCHEMA_MODE`  | `strict` (default) or `warn`                         |
+| `KB_GIT_TOKEN`    | HTTPS token handed to Git (alternative to an SSH key)|
 | `KB_INDEX_DIR`    | Where the search index is stored                     |
 | `KB_READ_ONLY`    | Disable all write tools                              |
 

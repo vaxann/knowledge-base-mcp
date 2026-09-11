@@ -6,8 +6,8 @@ vault:
   # Absolute path to the server's private Git clone of the knowledge base.
   # In a container this is a mounted volume; if it is empty, `remote` is cloned into it.
   path: /data/vault
-  # Git remote to clone on first start. Credentials come from Git itself
-  # (mounted SSH key or a credential helper), never from this file.
+  # Git remote to clone on first start. Credentials come from Git itself:
+  # either a mounted SSH key or an HTTPS token in KB_GIT_TOKEN. Never from this file.
   remote: ""            # e.g. git@github.com:me/my-notes.git
   # Extra glob patterns to hide from all tools (in addition to built-in defaults).
   exclude: []           # e.g. ["Private/**", "*.log"]
@@ -24,15 +24,8 @@ git:
   pull_interval: 60s
   # Skip pull-before-write if a pull succeeded this recently.
   pull_freshness: 5s
-  # How to resolve rebase conflicts automatically: remote-wins | local-wins.
-  # The losing version is always saved as <note>.conflict-<hash>.md.
-  conflict_strategy: remote-wins
-
-schema:
-  # Name of the per-folder schema file looked up inside the vault.
-  file: _schema.yaml
-  # strict rejects writes that violate a schema; warn lets them through with warnings.
-  mode: strict
+  # Merge conflicts are committed with Git's standard markers and listed in kb_sync_status;
+  # a client resolves them with the normal write tools. There is nothing to configure.
 
 search:
   # Where the full-text index lives. Must be outside the vault (second volume in a container).

@@ -38,7 +38,7 @@ Every path accepted or returned by a tool SHALL be relative to the vault root us
 - **THEN** the call fails with code `invalid_path`
 
 ### Requirement: Excluded paths are invisible
-The server SHALL hide, by default, `.git/`, `.obsidian/`, `.trash/` and any other directory whose name starts with a dot, and SHALL support additional user-configured glob patterns. Excluded paths MUST NOT appear in listings, search results or resources and MUST NOT be readable or writable through tools, returning `not_found` when addressed directly.
+The server SHALL hide, by default, `.git/` and any other file or directory whose name starts with a dot (editor settings such as `.obsidian/` included), and SHALL support additional user-configured glob patterns. Excluded paths MUST NOT appear in listings, search results or resources and MUST NOT be readable or writable through tools, returning `not_found` when addressed directly.
 
 #### Scenario: Default exclusion
 - **WHEN** a client lists the vault root

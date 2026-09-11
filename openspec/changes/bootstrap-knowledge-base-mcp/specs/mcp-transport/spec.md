@@ -27,11 +27,15 @@ The server SHALL speak MCP over standard input and output and MUST write logs on
 - **THEN** it holds no listening TCP or Unix sockets
 
 ### Requirement: Runs as a container
-The project SHALL publish a container image containing the server binary and the `git` CLI. On start inside a container the server SHALL clone the configured remote into a mounted volume if the vault path is empty, and reuse the existing clone otherwise. Git credentials SHALL be provided by mounting an SSH key (read-only) or by an HTTPS token in an environment variable consumed only by Git; the server MUST NOT persist credentials anywhere else. The container SHALL be usable directly as an MCP command (`docker run -i ...`).
+The project SHALL publish a container image containing the server binary and the `git` CLI. On start inside a container the server SHALL clone the configured remote into a mounted volume if the vault path is empty, and reuse the existing clone otherwise. Both credential methods SHALL be supported and documented: a read-only mounted SSH key, and an HTTPS token in an environment variable consumed only by Git; the server MUST NOT persist credentials anywhere else. The image SHALL be published for `linux/amd64` and `linux/arm64`. The container SHALL be usable directly as an MCP command (`docker run -i ...`).
 
 #### Scenario: First run with an empty volume
 - **WHEN** the container starts with `KB_GIT_REMOTE` set, an empty volume at `KB_VAULT_PATH` and a mounted SSH key
 - **THEN** the remote is cloned, the index is built, and the server answers `initialize` on stdio
+
+#### Scenario: First run with an HTTPS token
+- **WHEN** the container starts with an HTTPS remote and a token environment variable instead of an SSH key
+- **THEN** the clone and later pushes succeed and the token is never written to the volume or logs
 
 #### Scenario: Restart with an existing volume
 - **WHEN** the container restarts with a populated volume

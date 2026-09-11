@@ -38,7 +38,7 @@ The server SHALL provide `kb_list(folder, recursive, glob, limit, cursor)` retur
 - **THEN** the response includes `next_cursor`, and passing it returns the remaining entries without duplicates
 
 ### Requirement: Backlinks
-The server SHALL provide `kb_backlinks(path)` returning every note that links to the target through a wikilink (`[[Name]]`, `[[Name|alias]]`, `[[Name#heading]]`, `[[folder/Name]]`) or a relative Markdown link, resolving links with Obsidian's shortest-unique-path rule, and including the line context of each link.
+The server SHALL provide `kb_backlinks(path)` returning every note that links to the target through a wikilink (`[[Name]]`, `[[Name|alias]]`, `[[Name#heading]]`, `[[folder/Name]]`) or a relative Markdown link, resolving links by the common shortest-unique-path rule used by wikilink-based editors, and including the line context of each link.
 
 #### Scenario: Wikilink by basename
 - **WHEN** note A contains `[[Target|see this]]` and `Target.md` is unique in the vault
