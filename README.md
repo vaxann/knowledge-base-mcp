@@ -6,10 +6,10 @@ An [MCP](https://modelcontextprotocol.io) server, written in Go, that gives AI a
 
 ## What it will do
 
-- **Fast search** — full-text search over notes with Cyrillic and Latin stemming, frontmatter filters, and a "context bundle" tool that returns the most relevant sections within a token budget, so any LLM can answer questions about the vault with a single call.
+- **Fast search, three ways** — ranked full-text search with Cyrillic and Latin stemming and frontmatter filters; grep-style exact or regex matching across all notes; Dataview-style metadata queries. A "context bundle" tool returns the most relevant sections within a size budget, so any LLM can answer questions about the vault with a single call.
 - **Read notes** — get a note with parsed YAML frontmatter, headings, tags, outgoing links and backlinks; list folders; query notes by frontmatter fields (Dataview‑style).
-- **Edit notes** — create notes (optionally from templates), replace or patch content (append, replace a section, set frontmatter keys), move and delete, with optimistic concurrency.
-- **Versioning for free** — every change is an atomic Git commit; the server pulls and pushes automatically, exposes per‑note history, diffs and restore, and never rewrites history.
+- **Edit notes** — create, replace or patch content (append, replace a section, set frontmatter keys), rename and delete, with optimistic concurrency. The server is a data-access layer: no templates, no magic link rewriting, the calling model stays in control.
+- **Versioning for free** — every change is an atomic Git commit; the server pulls and pushes automatically and lets clients walk the log, list the tree at any revision, read and diff old versions (deleted notes included) and restore them. History is never rewritten.
 - **Two transports** — stdio for local clients (Claude Desktop, Claude Code, Cursor, …) and streamable HTTP with bearer‑token auth so remote agents can use the same vault.
 - **Safe by default** — vault‑relative paths only, deny‑listed folders (`.obsidian/`, `.git/`, …), read‑only mode, no note content or secrets in logs.
 

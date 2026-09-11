@@ -1,15 +1,15 @@
 ## Purpose
 
-Lets clients create and modify notes safely: validated input, atomic writes, optimistic concurrency, Obsidian-compatible move and delete semantics.
+Lets clients create and modify notes safely: validated input, atomic writes, optimistic concurrency, plain rename and delete semantics with Git as the safety net.
 
 ## ADDED Requirements
 
 ### Requirement: Create a note
-The server SHALL provide `kb_create_note(path, content, frontmatter, template, overwrite)` that creates a Markdown note, creating parent folders as needed. The path MUST end in `.md`. WHEN `template` names a file in the configured templates folder, the content SHALL be produced from it with `{{title}}`, `{{date}}` and `{{time}}` placeholders substituted, then `content` appended. WHEN `frontmatter` is given, it SHALL be merged over any template frontmatter. The result SHALL include the created path, `etag` and the commit hash.
+The server SHALL provide `kb_create_note(path, content, frontmatter, overwrite)` that creates a Markdown note, creating parent folders as needed. The path MUST end in `.md`. WHEN `frontmatter` is given, it SHALL be serialised as the YAML header in front of `content` (or merged over a header already present in `content`). The server SHALL NOT apply templates; clients wanting a template read it from the vault like any other note and pass the resulting content. The result SHALL include the created path, `etag` and the commit hash.
 
-#### Scenario: New note from template
-- **WHEN** a client creates `Contacts/Alice.md` with template `contact` and frontmatter `{role: engineer}`
-- **THEN** the file contains the template body with placeholders filled, frontmatter including `role: engineer`, and one commit exists for it
+#### Scenario: New note with frontmatter
+- **WHEN** a client creates `Contacts/Alice.md` with content `# Alice` and frontmatter `{role: engineer}`
+- **THEN** the file starts with a YAML header containing `role: engineer`, followed by the body, and one commit exists for it
 
 #### Scenario: Note already exists
 - **WHEN** the target path exists and `overwrite` is false
@@ -45,27 +45,23 @@ The server SHALL provide `kb_patch_note(path, operations, etag)` applying an ord
 - **WHEN** `insert_after_heading` names a heading that does not exist
 - **THEN** the call fails with code `patch_failed` and no operation is applied
 
-### Requirement: Move or rename with link rewriting
-The server SHALL provide `kb_move_note(from, to, update_links)` that renames a note inside the vault. It MUST fail with `already_exists` if `to` exists and with `not_found` if `from` does not. WHEN `update_links` is true (default), wikilinks and relative Markdown links in other notes that resolve to the moved note SHALL be rewritten to resolve to the new path, and all touched files SHALL be part of the same commit. The result SHALL list every rewritten note.
+### Requirement: Move or rename without touching other notes
+The server SHALL provide `kb_move_note(from, to)` that renames a note inside the vault as a Git rename. It MUST fail with `already_exists` if `to` exists and with `not_found` if `from` does not. The server SHALL NOT rewrite links in other notes; instead the result SHALL list the notes that linked to the old path (from the backlink graph) so the client can update them with `kb_grep` and `kb_patch_note` if it chooses to.
 
 #### Scenario: Rename with backlinks
 - **WHEN** `Old.md` is moved to `Archive/New.md` and two notes link `[[Old]]`
-- **THEN** those links become `[[New]]` (or a path-qualified form if `New` is ambiguous), and the commit contains three files
+- **THEN** only the rename is committed, and the result lists those two notes as `referencing_notes`
 
-#### Scenario: Move without link rewriting
-- **WHEN** `update_links` is false
-- **THEN** only the rename is committed and the result reports the count of now-dangling links
+### Requirement: Delete a note permanently
+The server SHALL provide `kb_delete_note(path, etag)` that removes the file from the work tree and commits the deletion. There is no trash folder; recovery is done through Git history with `kb_restore`.
 
-### Requirement: Delete a note
-The server SHALL provide `kb_delete_note(path, permanent)`. By default the note SHALL be moved to `.trash/` preserving its relative path (soft delete); WHEN `permanent` is true the file SHALL be removed. Either outcome is committed.
+#### Scenario: Delete and recover
+- **WHEN** a client deletes `Inbox/Draft.md` and later calls `kb_restore("Inbox/Draft.md", "<commit before deletion>")`
+- **THEN** after the delete the file is absent, unlisted and unsearchable, and after the restore it is back with its previous content and a new commit
 
-#### Scenario: Soft delete
-- **WHEN** a client deletes `Inbox/Draft.md`
-- **THEN** the file exists at `.trash/Inbox/Draft.md`, is no longer listed or searchable, and one commit records the move
-
-#### Scenario: Permanent delete
-- **WHEN** `permanent` is true
-- **THEN** the file is removed from the work tree and one commit records the deletion
+#### Scenario: Stale etag on delete
+- **WHEN** `etag` is provided and does not match
+- **THEN** the call fails with code `conflict` and the file remains
 
 ### Requirement: Writes are atomic on disk and immediately searchable
 Every write SHALL be performed by writing a temporary file and renaming it into place, so readers never observe partial content. After a write tool returns successfully, the search index MUST already reflect the change.

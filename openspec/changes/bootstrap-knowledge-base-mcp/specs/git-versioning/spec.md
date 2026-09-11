@@ -1,6 +1,6 @@
 ## Purpose
 
-Guarantees that every change to the vault is a reviewable Git commit, keeps the local clone synchronised with its remote, and exposes history without ever rewriting it.
+Guarantees that every change to the vault is a reviewable Git commit, keeps the local clone synchronised with its remote, and lets clients browse and restore any past state without ever rewriting history.
 
 ## ADDED Requirements
 
@@ -47,12 +47,33 @@ WHEN the work tree contains uncommitted changes not made by the server, the serv
 - **WHEN** `autocommit_external` is true in the same situation
 - **THEN** two commits result: the external one first, then the server's
 
-### Requirement: Per-note history, diff and restore
-The server SHALL provide `kb_history(path, limit)` listing commits touching the note (hash, date, author, message), `kb_show_revision(path, revision)` returning the note content at that revision, `kb_diff(path, from, to)` returning a unified diff, and `kb_restore(path, revision)` writing that revision's content as a new commit.
+### Requirement: Navigating history
+The server SHALL let clients move through the vault's Git history without shell access:
+- `kb_log(limit, cursor, folder, since)` lists commits on the current branch (hash, date, author, message, changed paths), newest first, with pagination.
+- `kb_history(path, limit)` lists commits touching a note, following renames and including commits after which the note no longer exists.
+- `kb_ls_tree(revision, folder)` lists notes and folders as they existed at a revision, so a client can discover files that were later deleted or renamed.
+- `kb_show_revision(path, revision)` returns a note's content at a revision, including notes deleted since.
+- `kb_diff(from, to, path)` returns a unified diff between two revisions, for one note or the whole vault; `to` defaults to the work tree.
+Revisions SHALL accept full or abbreviated commit hashes and Git-style relative forms such as `HEAD~3`; unknown revisions fail with code `not_found`.
+
+#### Scenario: Find and read a deleted note
+- **WHEN** a note was deleted two commits ago and a client calls `kb_ls_tree("HEAD~2", "Inbox")` then `kb_show_revision("Inbox/Draft.md", "HEAD~2")`
+- **THEN** the listing includes the note and the second call returns its content as of that revision
+
+#### Scenario: History of a renamed note
+- **WHEN** a note was renamed and then edited
+- **THEN** `kb_history` on the new path lists commits from before the rename as well
+
+### Requirement: Restore from history
+The server SHALL provide `kb_restore(path, revision)` that writes the content of `path` as of `revision` into the work tree, creating the file if it no longer exists, and commits it as `kb_restore: <path>` with the source revision in the message. History is never rewritten; the restore is a new commit on top.
 
 #### Scenario: Restore an earlier version
 - **WHEN** a client restores a note to a revision from yesterday
-- **THEN** the work tree matches that revision and a new commit `kb_restore: <path>` is added on top of history
+- **THEN** the work tree matches that revision and a new commit is added on top of history
+
+#### Scenario: Restore a deleted note
+- **WHEN** the note does not exist in the work tree but existed at `revision`
+- **THEN** the file is recreated with that content, indexed, and committed
 
 ### Requirement: Sync status and manual sync
 The server SHALL provide `kb_sync_status()` returning branch, ahead/behind counts, `dirty`, state (`ok`, `offline`, `conflict`), times of last successful pull and push, and the last error; and `kb_sync_now()` triggering an immediate pull and push and returning the resulting status.

@@ -48,17 +48,29 @@ A single vault-level mutex serializes writes. Before mutating, the server fetche
 ### D7. Conflicts are surfaced, never auto-resolved
 If a pull cannot fast-forward or rebase cleanly, the server aborts the rebase, keeps local commits, flips to a `conflict` state, rejects writes with `sync_conflict`, and keeps serving reads. A human (or a future tool) resolves it in the clone. Force-push, `reset --hard` and `commit --amend` are never executed.
 
-### D8. Link resolution follows Obsidian rules
-Wikilinks resolve by shortest unique path (basename first, then relative path), support `|alias`, `#heading` and `^block` suffixes, and are case-insensitive on case-insensitive filesystems. Move/rename rewrites links in other notes by default (as Obsidian does), producing a single commit with all touched files.
+### D8. Link resolution follows Obsidian rules; the server never rewrites links
+Wikilinks resolve by shortest unique path (basename first, then relative path), support `|alias`, `#heading` and `^block` suffixes, and are case-insensitive on case-insensitive filesystems. Resolution is used for backlinks and for reporting which notes reference a moved note. Rewriting links is deliberately left to the client: it can `kb_grep` for the old name and `kb_patch_note` each file, keeping every edit explicit and reviewable in history.
+*Alternative:* Obsidian-style automatic rewriting (rejected: hidden multi-file edits made by the server, ambiguity when several notes share a basename).
+
+### D8a. Grep is a second, index-free search path
+`kb_grep` walks visible notes concurrently and matches literally or with RE2 (`regexp`), skipping binaries by extension and size. For vaults of a few thousand notes a parallel scan is well under the latency budget, so no trigram index is needed; the full-text index may be used only to pre-filter candidates for literal patterns when the vault grows.
+*Alternative:* shelling out to `ripgrep` (rejected: extra host dependency; Go's `regexp` is fast enough at this scale).
+
+### D8b. Deletion is permanent; Git is the trash
+`kb_delete_note` removes the file and commits. Recovery is `kb_ls_tree` / `kb_show_revision` / `kb_restore` over Git history, which also covers notes deleted or renamed by other clones. Following renames in `kb_history` uses `git log --follow`.
+*Alternative:* Obsidian-style `.trash/` (rejected: duplicates what Git already provides and leaks deleted content into listings and search unless special-cased).
+
+### D8c. No templates in the server
+Templates are ordinary notes in a folder the user chooses; a client that wants one reads it with `kb_get_note` and passes the filled content to `kb_create_note`. Keeps the write API minimal and template syntax out of scope.
 
 ### D9. HTTP transport is opt-in and token-gated
 Streamable HTTP binds only when configured. A bearer token is mandatory for non-loopback addresses; comparison is constant-time. TLS is delegated to a reverse proxy or private network (Tailscale/WireGuard); the docs say so explicitly.
 
 ### D10. Tool surface (v1)
 Read: `kb_get_note`, `kb_get_section`, `kb_list`, `kb_backlinks`, `kb_tags`.
-Search: `kb_search`, `kb_query`, `kb_context`, `kb_quick_open`.
+Search: `kb_search`, `kb_grep`, `kb_query`, `kb_context`, `kb_quick_open`.
 Write: `kb_create_note`, `kb_replace_note`, `kb_patch_note`, `kb_move_note`, `kb_delete_note`.
-Git: `kb_history`, `kb_show_revision`, `kb_diff`, `kb_restore`, `kb_sync_status`, `kb_sync_now`.
+Git: `kb_log`, `kb_history`, `kb_ls_tree`, `kb_show_revision`, `kb_diff`, `kb_restore`, `kb_sync_status`, `kb_sync_now`.
 Ops: `kb_info`, `kb_reindex`.
 Resources: `kb://note/<path>` (Markdown), `kb://folder/<path>` (listing).
 
@@ -69,7 +81,8 @@ Resources: `kb://note/<path>` (Markdown), `kb://folder/<path>` (listing).
 - [Uncommitted foreign changes in the clone block a clean pull] → default: stash-free approach, commit only the server's files and warn in `kb_sync_status`; optional `autocommit_external` to commit foreign changes with a distinct message.
 - [Push storms from many small edits] → debounce (5 s default) and coalesce; commits remain granular.
 - [Exposing personal data over HTTP] → token mandatory, loopback default, read-only mode, documented TLS guidance.
-- [Russian stemming quality] → Snowball is adequate for search; exact-phrase and prefix queries remain available as fallbacks.
+- [Russian stemming quality] → Snowball is adequate for ranked search; `kb_grep` gives exact matching when stemming gets in the way.
+- [Client forgets to fix links after a rename] → `kb_move_note` returns `referencing_notes`; tool description tells the model to review them.
 
 ## Migration Plan
 
@@ -77,6 +90,4 @@ Greenfield. Deployment is a binary plus a config; rollback is stopping the proce
 
 ## Open Questions
 
-- Should `kb_delete_note` default to soft delete into `.trash/` (Obsidian convention) or hard delete? Draft assumes soft delete.
-- Should templates support only Obsidian core placeholders (`{{date}}`, `{{time}}`, `{{title}}`) or also a small expression syntax? Draft assumes core placeholders only.
 - Default `pull_interval` (60 s) versus pull-on-demand only; adjustable without spec changes.

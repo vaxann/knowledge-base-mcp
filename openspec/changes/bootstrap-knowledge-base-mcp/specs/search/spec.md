@@ -1,6 +1,6 @@
 ## Purpose
 
-Gives clients fast, ranked search and structured queries over the vault, plus retrieval bundles sized for a language model's context, backed by an always-fresh index.
+Gives clients fast search over the vault in three forms: ranked full-text search, exact grep-style matching, and structured metadata queries, plus retrieval bundles sized for a language model's context, backed by an always-fresh index.
 
 ## ADDED Requirements
 
@@ -51,12 +51,23 @@ The server SHALL provide `kb_quick_open(text, limit)` performing prefix and fuzz
 - **WHEN** the client passes `budgt 26`
 - **THEN** `Budget 2026.md` is the first candidate
 
+### Requirement: Grep-style text search
+The server SHALL provide `kb_grep(pattern, regex, case_sensitive, folder, glob, context_lines, limit)` that scans visible notes for a literal string (default) or an RE2 regular expression and returns every match as path, line number, the matching line and optional surrounding context lines, grouped by file. It is intended for exact lookups such as finding every `[[Old Name]]` link before or after a rename, and MUST NOT depend on stemming or ranking.
+
+#### Scenario: Find all links to a note
+- **WHEN** the client greps for the literal `[[Old Name` across the vault
+- **THEN** every line containing that text is returned with its path and line number, including inside code blocks
+
+#### Scenario: Regular expression with glob
+- **WHEN** the client greps for `(?i)invoice-\d{4}` with glob `Finance/**`
+- **THEN** only matches under `Finance/` are returned
+
 ### Requirement: Search latency
-With a warm index, `kb_search` and `kb_quick_open` SHALL complete with p95 ≤ 100 ms for vaults up to 5,000 notes and p95 ≤ 300 ms up to 20,000 notes, measured on the benchmark fixture on commodity hardware.
+With a warm index, `kb_search` and `kb_quick_open` SHALL complete with p95 ≤ 100 ms for vaults up to 5,000 notes and p95 ≤ 300 ms up to 20,000 notes; `kb_grep` SHALL complete with p95 ≤ 200 ms for vaults up to 5,000 notes. All measured on the benchmark fixture on commodity hardware.
 
 #### Scenario: Benchmark
 - **WHEN** the benchmark suite runs against the generated 5,000-note vault
-- **THEN** the recorded p95 for `kb_search` is at most 100 ms
+- **THEN** the recorded p95 is at most 100 ms for `kb_search` and at most 200 ms for `kb_grep`
 
 ### Requirement: Index lifecycle and freshness
 The index SHALL be stored outside the vault (or in a git-ignored location) and SHALL be rebuilt on startup when it is absent, when its schema version differs, or when its recorded vault revision does not match the current Git `HEAD`. Changes made through write tools SHALL be indexed synchronously. Changes made outside the server (desktop editor, `git pull`) SHALL be reflected within 2 seconds. `kb_reindex` SHALL force a full rebuild, and `kb_info` SHALL report the indexed note count and the time of the last index update.

@@ -9,8 +9,6 @@ vault:
   remote: ""            # e.g. git@github.com:me/my-notes.git
   # Extra glob patterns to hide from all tools (in addition to built-in defaults).
   exclude: []           # e.g. ["Private/**", "*.log"]
-  # Folder that holds note templates used by kb_create_note.
-  templates_dir: _templates
 
 git:
   branch: main
@@ -26,6 +24,8 @@ search:
   # Where the full-text index lives. Must be outside the vault or git-ignored.
   index_dir: ~/.cache/knowledge-base-mcp/index
   languages: [ru, en]
+  # Skip files larger than this in kb_grep.
+  grep_max_file_size: 2MB
 
 server:
   # stdio is used when http.listen is empty.

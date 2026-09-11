@@ -3,7 +3,7 @@
 - [ ] 1.1 Create `cmd/knowledge-base-mcp` and `internal/{config,vault,search,gitsync,mcp}` packages with a `main` that prints version; verify `go build ./...` succeeds
 - [ ] 1.2 Add Makefile targets (`build`, `test`, `lint`, `bench`) and `golangci-lint` config; verify `make lint` passes on the empty skeleton
 - [ ] 1.3 Add GitHub Actions workflow running build, test, lint and `govulncheck` on push/PR; verify a green run on the default branch
-- [ ] 1.4 Create a synthetic fixture vault under `testdata/vault` (frontmatter, wikilinks, tags, templates, an excluded folder, a binary attachment) and a helper that initialises it as a temporary Git repo; verify a test can open it
+- [ ] 1.4 Create a synthetic fixture vault under `testdata/vault` (frontmatter, wikilinks, tags, an excluded folder, a binary attachment, a deleted-then-restored note in history) and a helper that initialises it as a temporary Git repo; verify a test can open it
 
 ## 2. Configuration and vault access
 
@@ -29,22 +29,23 @@
 - [ ] 5.2 Implement full scan, incremental upsert/delete, on-disk persistence with schema/vault-revision stamps; verify reindex-on-mismatch test
 - [ ] 5.3 Wire freshness: fsnotify watcher with debounce and HEAD-change trigger after pulls; verify external-change test updates the index within 2 s
 - [ ] 5.4 Implement `kb_search` (ranking, title boost, highlights, filters), `kb_quick_open`, `kb_query` (frontmatter predicates, sort, select), `kb_context` (heading-chunked bundle within a budget); verify integration tests
-- [ ] 5.5 Add a benchmark over a generated 5,000-note vault; verify p95 search latency ≤ 100 ms warm and record results in `docs/benchmarks.md`
+- [ ] 5.6 Implement `kb_grep` (parallel scan, literal and RE2, glob, context lines, binary skip); verify tests including matches inside code blocks
+- [ ] 5.5 Add a benchmark over a generated 5,000-note vault; verify p95 ≤ 100 ms for `kb_search` and ≤ 200 ms for `kb_grep` and record results in `docs/benchmarks.md`
 
 ## 6. Write tools
 
 - [ ] 6.1 Implement atomic file writes (temp + rename), `etag` computation and conflict detection; verify concurrent-write tests
-- [ ] 6.2 Implement `kb_create_note` (templates with core placeholders, parent dirs, exists check) and `kb_replace_note`; verify tests
+- [ ] 6.2 Implement `kb_create_note` (frontmatter serialisation, parent dirs, exists check) and `kb_replace_note`; verify tests
 - [ ] 6.3 Implement `kb_patch_note` operations (append, prepend, replace_section, insert_after_heading, set_frontmatter, remove_frontmatter, find_replace) applied atomically; verify tests including frontmatter-only edits leaving the body untouched
-- [ ] 6.4 Implement `kb_move_note` with link rewriting and `kb_delete_note` (soft delete default, hard flag); verify tests that all touched files are in one change set
+- [ ] 6.4 Implement `kb_move_note` (git rename, `referencing_notes` from the backlink graph) and `kb_delete_note` (permanent, etag-checked); verify tests
 - [ ] 6.5 Enforce read-only mode (write tools not listed); verify a test that `tools/list` omits them
 
 ## 7. Git versioning
 
-- [ ] 7.1 Implement the `Repo` interface over the `git` CLI (status, add, commit, fetch, ff/rebase, push, log, show, diff) plus a fake for tests; verify unit tests against a temp repo
+- [ ] 7.1 Implement the `Repo` interface over the `git` CLI (status, add, commit, fetch, ff/rebase, push, log with --follow, ls-tree, show, diff, rev-parse) plus a fake for tests; verify unit tests against a temp repo
 - [ ] 7.2 Implement commit-per-mutation with the message format and author config; verify each write tool produces exactly one commit containing only touched files
 - [ ] 7.3 Implement pull-before-write, periodic pull, debounced/retried async push, and the `conflict` state machine (no force, no reset); verify tests with a bare remote and a competing clone
-- [ ] 7.4 Implement `kb_history`, `kb_show_revision`, `kb_diff`, `kb_restore`, `kb_sync_status`, `kb_sync_now`; verify tests
+- [ ] 7.4 Implement `kb_log`, `kb_history`, `kb_ls_tree`, `kb_show_revision`, `kb_diff`, `kb_restore` (including deleted notes), `kb_sync_status`, `kb_sync_now`; verify tests
 - [ ] 7.5 Implement `autocommit_external` option; verify a foreign change is committed with the distinct message only when enabled
 
 ## 8. Transport and server
@@ -59,4 +60,4 @@
 
 - [ ] 9.1 Write `docs/` pages: configuration reference, client setup (Claude Desktop, Claude Code, Cursor), remote HTTP deployment with TLS guidance; verify links render on GitHub
 - [ ] 9.2 Add goreleaser config producing Linux/macOS/Windows binaries and a container image; verify a dry-run build
-- [ ] 9.3 End-to-end scenario test: create → search → patch → move → history → restore over a fixture remote; verify it passes in CI
+- [ ] 9.3 End-to-end scenario test: create → search → grep → patch → move → delete → ls_tree → restore over a fixture remote; verify it passes in CI
