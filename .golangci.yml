@@ -1,0 +1,22 @@
+version: "2"
+run:
+  timeout: 5m
+linters:
+  default: standard
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - misspell
+    - gosec
+  settings:
+    gosec:
+      excludes:
+        - G204 # git CLI is invoked with controlled arguments by design
+        - G304 # paths are sandboxed by internal/vault before use
+formatters:
+  enable:
+    - gofmt
+    - goimports
