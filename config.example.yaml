@@ -3,35 +3,44 @@
 # Environment variables take precedence over this file.
 
 vault:
-  # Absolute path to a local Git clone of your Markdown knowledge base.
-  path: /home/me/notes
-  # Optional. If `path` does not exist yet, the server clones this remote into it.
+  # Absolute path to the server's private Git clone of the knowledge base.
+  # In a container this is a mounted volume; if it is empty, `remote` is cloned into it.
+  path: /data/vault
+  # Git remote to clone on first start. Credentials come from Git itself
+  # (mounted SSH key or a credential helper), never from this file.
   remote: ""            # e.g. git@github.com:me/my-notes.git
   # Extra glob patterns to hide from all tools (in addition to built-in defaults).
   exclude: []           # e.g. ["Private/**", "*.log"]
 
 git:
   branch: main
+  # Dedicated identity so edits made through the server are visible in history.
   author_name: Knowledge Base MCP
   author_email: kb-mcp@localhost
+  # Stable identifier of this instance, written as a commit trailer. Generated if empty.
+  instance_id: ""
   auto_push: true
   push_debounce: 5s
   pull_interval: 60s
-  # Commit changes made outside the server (e.g. by a desktop editor) before writing.
-  autocommit_external: false
+  # Skip pull-before-write if a pull succeeded this recently.
+  pull_freshness: 5s
+  # How to resolve rebase conflicts automatically: remote-wins | local-wins.
+  # The losing version is always saved as <note>.conflict-<hash>.md.
+  conflict_strategy: remote-wins
+
+schema:
+  # Name of the per-folder schema file looked up inside the vault.
+  file: _schema.yaml
+  # strict rejects writes that violate a schema; warn lets them through with warnings.
+  mode: strict
 
 search:
-  # Where the full-text index lives. Must be outside the vault or git-ignored.
-  index_dir: ~/.cache/knowledge-base-mcp/index
+  # Where the full-text index lives. Must be outside the vault (second volume in a container).
+  index_dir: /data/index
   languages: [ru, en]
   # Skip files larger than this in kb_grep.
   grep_max_file_size: 2MB
 
 server:
-  # stdio is used when http.listen is empty.
-  http:
-    listen: ""          # e.g. 127.0.0.1:8765
-    # Bearer token. Prefer KB_HTTP_TOKEN env var; never commit a real value.
-    token: ""
   read_only: false
   log_level: info

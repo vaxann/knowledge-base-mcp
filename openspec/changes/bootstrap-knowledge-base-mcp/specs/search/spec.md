@@ -70,11 +70,7 @@ With a warm index, `kb_search` and `kb_quick_open` SHALL complete with p95 ≤ 1
 - **THEN** the recorded p95 is at most 100 ms for `kb_search` and at most 200 ms for `kb_grep`
 
 ### Requirement: Index lifecycle and freshness
-The index SHALL be stored outside the vault (or in a git-ignored location) and SHALL be rebuilt on startup when it is absent, when its schema version differs, or when its recorded vault revision does not match the current Git `HEAD`. Changes made through write tools SHALL be indexed synchronously. Changes made outside the server (desktop editor, `git pull`) SHALL be reflected within 2 seconds. `kb_reindex` SHALL force a full rebuild, and `kb_info` SHALL report the indexed note count and the time of the last index update.
-
-#### Scenario: External edit
-- **WHEN** a file in the vault is modified by another program
-- **THEN** within 2 seconds a search for its new content returns it
+The index SHALL be stored outside the vault (or in a git-ignored location) and SHALL be rebuilt on startup when it is absent, when its schema version differs, or when its recorded vault revision does not match the current Git `HEAD`. Changes made through write tools SHALL be indexed synchronously. Changes arriving through Git integration SHALL be indexed before the pull completes. The index SHALL be designed so that extracted text from attachments (PDF, Office documents) and vector embeddings can be added as additional sources in a later change without a format break. `kb_reindex` SHALL force a full rebuild, and `kb_info` SHALL report the indexed note count and the time of the last index update.
 
 #### Scenario: Remote change pulled
 - **WHEN** an automatic pull brings a commit adding a note
