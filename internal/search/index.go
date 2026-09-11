@@ -8,6 +8,7 @@ import (
 	"html"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -142,24 +143,34 @@ func buildMapping(langs []string) (mapping.IndexMapping, error) {
 	return im, nil
 }
 
-// OpenBleve opens or creates the index at dir. When reset is true the
-// existing index is discarded.
+// OpenBleve opens or creates the index under dir. The Bleve files live in a
+// "bleve" subdirectory so that dir itself may be a mount point (container
+// volume) that can be neither removed nor pre-populated. When reset is true
+// the existing index is discarded.
 func OpenBleve(dir string, langs []string, reset bool) (*BleveIndex, error) {
+	bleveDir := filepath.Join(dir, "bleve")
 	if reset {
-		if err := os.RemoveAll(dir); err != nil {
+		if err := os.RemoveAll(bleveDir); err != nil {
 			return nil, err
 		}
 	}
-	idx, err := bleve.Open(dir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	idx, err := bleve.Open(bleveDir)
+	if errors.Is(err, bleve.ErrorIndexMetaMissing) {
+		// Leftover empty or corrupt directory: start over.
+		if err := os.RemoveAll(bleveDir); err != nil {
+			return nil, err
+		}
+		err = bleve.ErrorIndexPathDoesNotExist
+	}
 	if errors.Is(err, bleve.ErrorIndexPathDoesNotExist) {
 		m, merr := buildMapping(langs)
 		if merr != nil {
 			return nil, merr
 		}
-		if err := os.MkdirAll(path.Dir(dir), 0o755); err != nil {
-			return nil, err
-		}
-		idx, err = bleve.New(dir, m)
+		idx, err = bleve.New(bleveDir, m)
 	}
 	if err != nil {
 		return nil, err

@@ -1,0 +1,13 @@
+.git
+bin
+dist
+.kb-index
+*.md
+!README.md
+openspec
+docs
+.github
+.claude
+testdata
+config.yaml
+.env*

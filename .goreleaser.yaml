@@ -1,0 +1,53 @@
+version: 2
+project_name: knowledge-base-mcp
+
+builds:
+  - id: server
+    main: ./cmd/knowledge-base-mcp
+    binary: knowledge-base-mcp
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags: ["-s -w -X main.version={{.Version}}"]
+    flags: ["-trimpath"]
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files: [LICENSE, README.md, config.example.yaml]
+
+checksum:
+  name_template: checksums.txt
+
+dockers:
+  - image_templates: ["ghcr.io/vaxann/knowledge-base-mcp:{{ .Version }}-amd64"]
+    dockerfile: Dockerfile
+    use: buildx
+    goarch: amd64
+    build_flag_templates: ["--platform=linux/amd64", "--build-arg=VERSION={{ .Version }}"]
+    extra_files: [docker/entrypoint.sh, go.mod, go.sum, cmd, internal]
+  - image_templates: ["ghcr.io/vaxann/knowledge-base-mcp:{{ .Version }}-arm64"]
+    dockerfile: Dockerfile
+    use: buildx
+    goarch: arm64
+    build_flag_templates: ["--platform=linux/arm64", "--build-arg=VERSION={{ .Version }}"]
+    extra_files: [docker/entrypoint.sh, go.mod, go.sum, cmd, internal]
+
+docker_manifests:
+  - name_template: ghcr.io/vaxann/knowledge-base-mcp:{{ .Version }}
+    image_templates:
+      - ghcr.io/vaxann/knowledge-base-mcp:{{ .Version }}-amd64
+      - ghcr.io/vaxann/knowledge-base-mcp:{{ .Version }}-arm64
+  - name_template: ghcr.io/vaxann/knowledge-base-mcp:latest
+    image_templates:
+      - ghcr.io/vaxann/knowledge-base-mcp:{{ .Version }}-amd64
+      - ghcr.io/vaxann/knowledge-base-mcp:{{ .Version }}-arm64
+
+release:
+  github:
+    owner: vaxann
+    name: knowledge-base-mcp
+  draft: false

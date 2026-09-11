@@ -2,9 +2,9 @@
 
 An [MCP](https://modelcontextprotocol.io) server, written in Go, that gives AI assistants fast, versioned access to a personal knowledge base kept as a folder of Markdown files inside a Git repository. Works with an Obsidian or Logseq vault or any plain Markdown tree; the server understands frontmatter, wikilinks and tags but imposes no structure on your content.
 
-> **Status:** design phase. The requirements live in [`openspec/`](openspec/) and are being refined before implementation starts. Nothing is runnable yet.
+> **Status:** first implementation complete and covered by tests; not yet released. The requirements live in [`openspec/`](openspec/).
 
-## What it will do
+## What it does
 
 - **Fast search, three ways** — ranked full-text search with Cyrillic and Latin stemming and frontmatter filters; grep-style exact or regex matching across all notes; Dataview-style metadata queries. A "context bundle" tool returns the most relevant sections within a size budget, so any LLM can answer questions about the vault with a single call.
 - **Read notes** — get a note with parsed YAML frontmatter, headings, tags, outgoing links and backlinks; list folders; query notes by frontmatter fields (Dataview‑style).
@@ -30,7 +30,30 @@ MCP client (Claude, Cursor, custom agent)
    private clone of your vault  ⇄  Git remote  ⇄  your editor's clone
 ```
 
-## Configuration (planned)
+## Quick start
+
+```bash
+go install github.com/vaxann/knowledge-base-mcp/cmd/knowledge-base-mcp@latest
+export KB_VAULT_PATH=$HOME/.local/share/kb/vault      # private clone, created on first start
+export KB_GIT_REMOTE=git@github.com:me/my-notes.git    # your vault repository
+knowledge-base-mcp -check                              # validates config, clones, builds the index
+```
+
+Then register `knowledge-base-mcp` as an MCP command in your client. See [docs/clients.md](docs/clients.md) for Claude Desktop, Claude Code, Cursor and container setups (SSH key or HTTPS token).
+
+## Tools
+
+| Group | Tools |
+|---|---|
+| Read | `kb_get_note`, `kb_get_section`, `kb_list`, `kb_backlinks`, `kb_tags` |
+| Search | `kb_search`, `kb_grep`, `kb_query`, `kb_context`, `kb_quick_open` |
+| Write | `kb_create_note`, `kb_replace_note`, `kb_patch_note`, `kb_move_note`, `kb_delete_note`, `kb_restore`, `kb_resolve_conflict` |
+| History & sync | `kb_log`, `kb_history`, `kb_ls_tree`, `kb_show_revision`, `kb_diff`, `kb_sync_status`, `kb_sync_now`, `kb_conflicts` |
+| Ops | `kb_info`, `kb_reindex` |
+
+Resources: `kb://note/<path>` (Markdown) and `kb://folder/<path>` (JSON listing).
+
+## Configuration
 
 | Env var           | Purpose                                              |
 |-------------------|------------------------------------------------------|
@@ -40,7 +63,7 @@ MCP client (Claude, Cursor, custom agent)
 | `KB_INDEX_DIR`    | Where the search index is stored                     |
 | `KB_READ_ONLY`    | Disable all write tools                              |
 
-See [`config.example.yaml`](config.example.yaml) for the full set. Real configuration files and credentials are git‑ignored and must never be committed.
+See [docs/configuration.md](docs/configuration.md) for the full reference and error codes, and [docs/conflicts.md](docs/conflicts.md) for how frozen merges are handed to the client. Real configuration files and credentials are git‑ignored and must never be committed.
 
 ## Roadmap
 
@@ -51,10 +74,11 @@ After the first release: text extraction from PDF and Office attachments so sear
 Requirements: Go 1.26+, `git`, and the [OpenSpec](https://github.com/Fission-AI/OpenSpec) CLI for spec‑driven changes.
 
 ```bash
-openspec list            # active change proposals
-openspec validate        # check specs
-go build ./...
-go test ./...
+make build      # bin/knowledge-base-mcp
+make race       # go test -race ./...
+make lint       # golangci-lint
+make bench      # 5,000-note search benchmark (see docs/benchmarks.md)
+openspec list   # active change proposals
 ```
 
 Workflow: every feature starts as an OpenSpec change (`openspec/changes/<name>/`) with a proposal, delta specs, design and tasks; once implemented it is archived into `openspec/specs/`.

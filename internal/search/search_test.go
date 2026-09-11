@@ -326,6 +326,41 @@ func TestContextBundle(t *testing.T) {
 	}
 }
 
+func TestOpenBleveInExistingEmptyDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "index")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	idx, err := OpenBleve(dir, []string{"ru", "en"}, false)
+	if err != nil {
+		t.Fatalf("open in empty dir: %v", err)
+	}
+	if err := idx.Upsert(context.Background(), Document{Path: "a.md", Title: "A", Body: "hello"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = idx.Close()
+	idx, err = OpenBleve(dir, []string{"ru", "en"}, false)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if n, _ := idx.Count(); n != 1 {
+		t.Errorf("count after reopen = %d", n)
+	}
+	_ = idx.Close()
+	// A leftover empty bleve subdirectory must not block startup either.
+	if err := os.RemoveAll(filepath.Join(dir, "bleve")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "bleve"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	idx, err = OpenBleve(dir, []string{"ru", "en"}, false)
+	if err != nil {
+		t.Fatalf("open with empty bleve subdir: %v", err)
+	}
+	_ = idx.Close()
+}
+
 // --- benchmark over a generated vault ---
 
 var words = strings.Fields("проект документ паспорт бюджет встреча отчёт задача идея контакт клиент договор счёт виза страховка школа поездка project document budget meeting report task idea contact client contract invoice visa insurance school trip alpha beta gamma delta zebra")
