@@ -1,0 +1,62 @@
+## 1. Project scaffolding
+
+- [ ] 1.1 Create `cmd/knowledge-base-mcp` and `internal/{config,vault,search,gitsync,mcp}` packages with a `main` that prints version; verify `go build ./...` succeeds
+- [ ] 1.2 Add Makefile targets (`build`, `test`, `lint`, `bench`) and `golangci-lint` config; verify `make lint` passes on the empty skeleton
+- [ ] 1.3 Add GitHub Actions workflow running build, test, lint and `govulncheck` on push/PR; verify a green run on the default branch
+- [ ] 1.4 Create a synthetic fixture vault under `testdata/vault` (frontmatter, wikilinks, tags, templates, an excluded folder, a binary attachment) and a helper that initialises it as a temporary Git repo; verify a test can open it
+
+## 2. Configuration and vault access
+
+- [ ] 2.1 Implement config loading (defaults → YAML file → `KB_*` env) with validation; verify unit tests cover precedence and missing-path errors
+- [ ] 2.2 Implement vault opening: path must be a Git work tree, optional bootstrap clone from remote; verify tests for valid, missing, non-git and clone cases
+- [ ] 2.3 Implement path sandboxing (relative only, no `..`, no symlink escape) and exclusion globs with built-in defaults; verify table tests reject traversal and hide excluded paths
+- [ ] 2.4 Implement the note model: frontmatter parse/serialise with order preservation, body split, line-ending detection; verify round-trip tests are byte-identical
+
+## 3. Note parsing
+
+- [ ] 3.1 Implement wikilink and Markdown link extraction with alias/heading/block suffixes; verify tests against fixture notes
+- [ ] 3.2 Implement Obsidian-style link resolution (shortest unique path, case handling) and a backlink graph; verify tests for ambiguous basenames
+- [ ] 3.3 Implement tag extraction from frontmatter and inline `#tags`, heading/section splitting; verify tests
+
+## 4. Read tools
+
+- [ ] 4.1 Implement `kb_get_note`, `kb_get_section`, `kb_list` (pagination, glob), `kb_backlinks`, `kb_tags`; verify integration tests over the fixture vault
+- [ ] 4.2 Register `kb://note/<path>` and `kb://folder/<path>` resources; verify an MCP client can read them
+
+## 5. Search index
+
+- [ ] 5.1 Define the `Indexer` interface and implement it with Bleve (fields: path, title, body, tags, folder, frontmatter, mtime; ru/en analyzers); verify a Cyrillic stemming test passes
+- [ ] 5.2 Implement full scan, incremental upsert/delete, on-disk persistence with schema/vault-revision stamps; verify reindex-on-mismatch test
+- [ ] 5.3 Wire freshness: fsnotify watcher with debounce and HEAD-change trigger after pulls; verify external-change test updates the index within 2 s
+- [ ] 5.4 Implement `kb_search` (ranking, title boost, highlights, filters), `kb_quick_open`, `kb_query` (frontmatter predicates, sort, select), `kb_context` (heading-chunked bundle within a budget); verify integration tests
+- [ ] 5.5 Add a benchmark over a generated 5,000-note vault; verify p95 search latency ≤ 100 ms warm and record results in `docs/benchmarks.md`
+
+## 6. Write tools
+
+- [ ] 6.1 Implement atomic file writes (temp + rename), `etag` computation and conflict detection; verify concurrent-write tests
+- [ ] 6.2 Implement `kb_create_note` (templates with core placeholders, parent dirs, exists check) and `kb_replace_note`; verify tests
+- [ ] 6.3 Implement `kb_patch_note` operations (append, prepend, replace_section, insert_after_heading, set_frontmatter, remove_frontmatter, find_replace) applied atomically; verify tests including frontmatter-only edits leaving the body untouched
+- [ ] 6.4 Implement `kb_move_note` with link rewriting and `kb_delete_note` (soft delete default, hard flag); verify tests that all touched files are in one change set
+- [ ] 6.5 Enforce read-only mode (write tools not listed); verify a test that `tools/list` omits them
+
+## 7. Git versioning
+
+- [ ] 7.1 Implement the `Repo` interface over the `git` CLI (status, add, commit, fetch, ff/rebase, push, log, show, diff) plus a fake for tests; verify unit tests against a temp repo
+- [ ] 7.2 Implement commit-per-mutation with the message format and author config; verify each write tool produces exactly one commit containing only touched files
+- [ ] 7.3 Implement pull-before-write, periodic pull, debounced/retried async push, and the `conflict` state machine (no force, no reset); verify tests with a bare remote and a competing clone
+- [ ] 7.4 Implement `kb_history`, `kb_show_revision`, `kb_diff`, `kb_restore`, `kb_sync_status`, `kb_sync_now`; verify tests
+- [ ] 7.5 Implement `autocommit_external` option; verify a foreign change is committed with the distinct message only when enabled
+
+## 8. Transport and server
+
+- [ ] 8.1 Wire all tools with JSON schemas, English descriptions and stable error codes into the MCP server; verify `tools/list` snapshot test
+- [ ] 8.2 Implement stdio transport (logs to stderr only); verify with a smoke test using an MCP client library
+- [ ] 8.3 Implement streamable HTTP transport with bearer auth (constant-time compare, refuse non-loopback without token), `/healthz`; verify 401/200 tests
+- [ ] 8.4 Implement the vault write mutex and concurrent reads; verify a race test (`go test -race`) with parallel clients
+- [ ] 8.5 Implement structured logging with redaction of tokens and note bodies; verify a test that log output never contains a note body
+
+## 9. Documentation and release
+
+- [ ] 9.1 Write `docs/` pages: configuration reference, client setup (Claude Desktop, Claude Code, Cursor), remote HTTP deployment with TLS guidance; verify links render on GitHub
+- [ ] 9.2 Add goreleaser config producing Linux/macOS/Windows binaries and a container image; verify a dry-run build
+- [ ] 9.3 End-to-end scenario test: create → search → patch → move → history → restore over a fixture remote; verify it passes in CI

@@ -1,0 +1,37 @@
+# Example configuration for knowledge-base-mcp.
+# Copy to config.yaml (git-ignored) or set the equivalent KB_* environment variables.
+# Environment variables take precedence over this file.
+
+vault:
+  # Absolute path to a local Git clone of your Markdown knowledge base.
+  path: /home/me/notes
+  # Optional. If `path` does not exist yet, the server clones this remote into it.
+  remote: ""            # e.g. git@github.com:me/my-notes.git
+  # Extra glob patterns to hide from all tools (in addition to built-in defaults).
+  exclude: []           # e.g. ["Private/**", "*.log"]
+  # Folder that holds note templates used by kb_create_note.
+  templates_dir: _templates
+
+git:
+  branch: main
+  author_name: Knowledge Base MCP
+  author_email: kb-mcp@localhost
+  auto_push: true
+  push_debounce: 5s
+  pull_interval: 60s
+  # Commit changes made outside the server (e.g. by a desktop editor) before writing.
+  autocommit_external: false
+
+search:
+  # Where the full-text index lives. Must be outside the vault or git-ignored.
+  index_dir: ~/.cache/knowledge-base-mcp/index
+  languages: [ru, en]
+
+server:
+  # stdio is used when http.listen is empty.
+  http:
+    listen: ""          # e.g. 127.0.0.1:8765
+    # Bearer token. Prefer KB_HTTP_TOKEN env var; never commit a real value.
+    token: ""
+  read_only: false
+  log_level: info

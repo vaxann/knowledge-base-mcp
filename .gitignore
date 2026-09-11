@@ -1,0 +1,27 @@
+# Binaries and build output
+/bin/
+/dist/
+/knowledge-base-mcp
+*.exe
+*.test
+*.out
+coverage.*
+
+# Local configuration and secrets (never commit real vault paths or tokens)
+.env
+.env.*
+config.yaml
+config.local.yaml
+*.local.yaml
+
+# Local search index / caches
+.kb-index/
+.cache/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+
+# OpenSpec local working views
+openspec/.worksets/
