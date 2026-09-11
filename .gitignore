@@ -10,6 +10,7 @@ coverage.*
 # Local configuration and secrets (never commit real vault paths or tokens)
 .env
 .env.*
+!.env.example
 config.yaml
 config.local.yaml
 *.local.yaml
