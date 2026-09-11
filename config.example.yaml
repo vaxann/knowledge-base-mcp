@@ -24,8 +24,8 @@ git:
   pull_interval: 60s
   # Skip pull-before-write if a pull succeeded this recently.
   pull_freshness: 5s
-  # Merge conflicts are committed with Git's standard markers and listed in kb_sync_status;
-  # a client resolves them with the normal write tools. There is nothing to configure.
+  # Merge conflicts are never resolved by the server: writes are blocked until a client
+  # submits a resolution through kb_resolve_conflict. There is nothing to configure.
 
 search:
   # Where the full-text index lives. Must be outside the vault (second volume in a container).

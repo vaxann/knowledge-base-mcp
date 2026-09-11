@@ -45,8 +45,8 @@
 - [ ] 7.1 Implement the `Repo` interface over the `git` CLI (status, add, commit, fetch, ff/rebase, push, log with --follow, ls-tree, show, diff, rev-parse) plus a fake for tests; verify unit tests against a temp repo
 - [ ] 7.2 Implement commit-per-mutation with the message format and author config; verify each write tool produces exactly one commit containing only touched files
 - [ ] 7.3 Implement pull-before-write with freshness window, periodic pull (merge), debounced/retried async push, branch guard; verify tests with a bare remote and a competing clone
-- [ ] 7.4 Implement conflict handling: commit the merge as Git leaves it (markers kept, modify/delete case), conflicted paths in the message, `conflicts` in sync status, re-index of conflicted files; verify tests that both sides survive and the path clears after a client write
-- [ ] 7.5 Surface conflicts to the writer: `merge_conflict` error with `content`/`ours`/`theirs`/`etag` when the pre-write pull conflicts on the target, current content in stale-`etag` `conflict` errors, `conflict_markers_present` warning; verify an end-to-end test where a client resolves and saves
+- [ ] 7.4 Implement the frozen-merge `conflict` state: detect conflicts, keep Git's merge state, block writes with `merge_conflict` carrying base/ours/theirs per path (content, modify/delete, add/add), expose `kb_conflicts`, survive restart; verify tests with a bare remote and a competing clone
+- [ ] 7.5 Implement `kb_resolve_conflict` (content / take / delete, marker check, partial resolutions, merge commit with trailers, re-index, push, leave state) and current content in stale-`etag` `conflict` errors; verify an end-to-end test where a client resolves and the remote receives one merge commit
 - [ ] 7.6 Implement `kb_log`, `kb_history`, `kb_ls_tree`, `kb_show_revision`, `kb_diff`, `kb_restore` (including deleted notes), `kb_sync_status`, `kb_sync_now`; verify tests
 
 ## 8. Transport and server
@@ -59,6 +59,6 @@
 
 ## 9. Documentation and release
 
-- [ ] 9.1 Write `docs/` pages: configuration reference, client setup (Claude Desktop, Claude Code, Cursor) for binary and container, both credential methods, conflict behaviour and how a client resolves markers; verify links render on GitHub
+- [ ] 9.1 Write `docs/` pages: configuration reference, client setup (Claude Desktop, Claude Code, Cursor) for binary and container, both credential methods, the conflict state and how a client resolves it; verify links render on GitHub
 - [ ] 9.2 Add Dockerfile (binary + git + openssh-client, entrypoint wiring both `GIT_SSH_COMMAND` and an HTTPS credential helper, clone-on-empty-volume) and goreleaser config for binaries and a multi-arch (`linux/amd64`, `linux/arm64`) GHCR image; verify `docker run -i` answers `initialize` with each credential method
 - [ ] 9.3 End-to-end scenario test: create → search → grep → patch → move → delete → ls_tree → restore over a fixture remote; verify it passes in CI

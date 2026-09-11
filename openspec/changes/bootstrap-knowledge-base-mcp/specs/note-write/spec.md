@@ -79,4 +79,4 @@ WHEN the server runs with `read_only` enabled, write tools SHALL NOT be listed a
 
 #### Scenario: Tools list in read-only mode
 - **WHEN** a client lists tools on a read-only server
-- **THEN** no `kb_create_note`, `kb_replace_note`, `kb_patch_note`, `kb_move_note`, `kb_delete_note` or `kb_restore` appears
+- **THEN** no `kb_create_note`, `kb_replace_note`, `kb_patch_note`, `kb_move_note`, `kb_delete_note`, `kb_restore` or `kb_resolve_conflict` appears

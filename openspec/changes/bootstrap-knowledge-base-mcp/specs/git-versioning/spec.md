@@ -1,6 +1,6 @@
 ## Purpose
 
-Guarantees that every change to the vault is a reviewable Git commit, keeps the local clone merged with its remote without human intervention, and lets clients browse and restore any past state without ever rewriting history.
+Guarantees that every change to the vault is a reviewable Git commit, keeps the local clone merged with its remote, hands unresolvable merges to the client that has the context to resolve them, and lets clients browse and restore any past state without ever rewriting history.
 
 ## ADDED Requirements
 
@@ -16,7 +16,7 @@ Every successful write tool call SHALL produce exactly one commit containing onl
 - **THEN** the work tree and history are unchanged
 
 ### Requirement: Automatic push with debounce and retry
-After a commit, the server SHALL push to the configured remote asynchronously, coalescing commits made within the debounce window (default 5 s) and retrying failures with exponential backoff. Push failures MUST NOT fail the write tool call; they SHALL be visible through `kb_sync_status` as an unpushed-commit count and last error.
+After a commit, the server SHALL push to the configured remote asynchronously, coalescing commits made within the debounce window (default 5 s) and retrying failures with exponential backoff. WHEN the push is rejected because the remote moved on, the server SHALL pull (merge) and push again, entering the `conflict` state if that merge conflicts. Push failures MUST NOT fail the write tool call; they SHALL be visible through `kb_sync_status` as an unpushed-commit count and last error.
 
 #### Scenario: Remote unreachable
 - **WHEN** the remote cannot be reached and a client writes a note
@@ -33,35 +33,39 @@ The server owns its clone exclusively: nothing else writes to the work tree. It 
 - **WHEN** a periodic pull brings a commit that adds a note
 - **THEN** `kb_search` finds the note without a manual reindex
 
-### Requirement: Conflicts are committed as Git leaves them
-WHEN a merge cannot complete cleanly, the server SHALL NOT stop, revert or pick a side. It SHALL stage the work tree exactly as Git left it, including the standard conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) inside the affected files, and commit the merge with a message `merge: <remote>/<branch> (conflicts: <paths>)`, then push. Conflicted files remain ordinary notes: they are listed, indexed and searchable (so `kb_grep("<<<<<<<")` finds them) and are resolved by a client editing them with the normal write tools. `kb_sync_status` SHALL list every note that still contains conflict markers under `conflicts`. The server MUST NEVER run force push, history rewriting of pushed commits, or hard resets on the vault.
+### Requirement: An unresolved merge stops writes and is handed to the client
+WHEN a merge cannot complete cleanly, the server SHALL keep the merge in progress locally: nothing is committed, nothing is pushed, and Git's conflict state (work tree with markers, index stages) is preserved. The server enters the `conflict` state. In that state every write tool and `kb_sync_now` MUST fail with code `merge_conflict`, and read tools continue to work. The `merge_conflict` error and the `kb_conflicts()` tool SHALL return, for every conflicted path: the kind of conflict (`content`, `modify/delete`, `delete/modify`, `add/add`), the content with markers, and the three sides separately (`base`, `ours` = the server's side, `theirs` = the remote side; absent when that side deleted the file), plus the remote commits being merged. The state is exposed by `kb_sync_status` (`state: conflict`, `conflicts: [paths]`) and persists across restarts until resolved.
 
-#### Scenario: Same lines changed on both sides
-- **WHEN** the remote and the server both changed the same lines of `Ideas/Idea.md`
-- **THEN** after the next pull the file contains both versions between conflict markers, a merge commit records it, the push succeeds, and `kb_sync_status.conflicts` includes `Ideas/Idea.md`
+#### Scenario: Conflict discovered before a write
+- **WHEN** the pull before `kb_patch_note("Ideas/Idea.md")` conflicts on `Ideas/Idea.md`
+- **THEN** the patch is not applied, the call fails with `merge_conflict` carrying `base`, `ours`, `theirs` and the marked content for that path, and nothing has been committed or pushed
 
-#### Scenario: Client resolves the conflict
-- **WHEN** a client replaces the conflicted note with content that has no markers
-- **THEN** the write commits normally and the path disappears from `kb_sync_status.conflicts`
+#### Scenario: Conflict discovered by the periodic pull
+- **WHEN** a periodic pull conflicts on two notes while no client is active
+- **THEN** the next write from any client fails with `merge_conflict` listing both notes, and `kb_sync_status` reports `state: conflict`
 
-#### Scenario: Deleted remotely, edited locally
-- **WHEN** the remote deleted a note the server had just patched
-- **THEN** the merge is committed with the file kept as Git leaves it for a modify/delete conflict, and the path is reported under `conflicts`
+#### Scenario: Reads during a conflict
+- **WHEN** a client calls `kb_get_note` on a conflicted note
+- **THEN** it returns the content with markers plus a `conflict` object with the three sides; other notes read normally
 
-### Requirement: Conflicts are handed to the client that is writing
-WHEN the pull performed before a write produces a conflict in the very note being written, the server MUST NOT apply the write. The call SHALL fail with code `merge_conflict` and return everything the client needs to resolve it itself: the note's current content with markers, the two sides separately (`ours` = the server's version before the merge, `theirs` = the remote version), the new `etag`, and the list of any other notes that conflicted in the same merge. A subsequent write with the new `etag` and marker-free content resolves the conflict. The same payload (current content, `etag`) SHALL accompany the `conflict` error raised by a stale `etag`, so a client can merge its intended change into the newer version instead of overwriting it. WHEN a client writes content that still contains conflict markers, the write succeeds and the result carries the warning `conflict_markers_present`.
+### Requirement: The client resolves the merge
+The server SHALL provide `kb_resolve_conflict(resolutions)` where each resolution names a conflicted path and either supplies the final `content`, or `take: ours | theirs`, or `delete: true`. The server SHALL validate that the supplied content contains no conflict markers (otherwise fail with `conflict_markers_present` and apply nothing). WHEN every conflicted path has a resolution, the server SHALL stage them, commit the merge with the message `merge: <remote>/<branch> (resolved: <paths>)` and the usual trailers (including `KB-Client`), re-index the changed files, leave the `conflict` state, and push. Partial resolutions SHALL be accepted and remembered until the set is complete, so a client may resolve files one call at a time.
 
-#### Scenario: Conflict on the note being saved
-- **WHEN** a client patches `Ideas/Idea.md`, and the pull before that write conflicts on the same note
-- **THEN** the patch is not applied, the result has code `merge_conflict` with `content`, `ours`, `theirs` and `etag`, and the merge commit with markers is already pushed
+#### Scenario: Full resolution in one call
+- **WHEN** a client sends resolutions for all conflicted paths with marker-free content
+- **THEN** one merge commit is created, the push succeeds, `kb_sync_status` returns to `ok`, and the resolved notes are searchable
 
-#### Scenario: Client resolves and saves
-- **WHEN** the client then calls `kb_replace_note` with merged content and the returned `etag`
-- **THEN** the write commits, the note has no markers, and it disappears from `kb_sync_status.conflicts`
+#### Scenario: Shorthand resolution
+- **WHEN** a client resolves a path with `take: theirs`
+- **THEN** the remote version is used for that path and no content needs to be sent
 
-#### Scenario: Stale etag carries the current version
-- **WHEN** a write fails with `conflict` because the `etag` is stale
-- **THEN** the error includes the current content and `etag` so the client can re-apply its change on top
+#### Scenario: Markers left in content
+- **WHEN** a resolution's content still contains `<<<<<<<`
+- **THEN** the call fails with `conflict_markers_present` and the merge stays in progress
+
+#### Scenario: Partial resolution
+- **WHEN** two notes conflict and the client resolves only one
+- **THEN** the call succeeds, `kb_conflicts` lists the remaining note, and writes stay blocked until it is resolved too
 
 ### Requirement: Only the main branch
 The server SHALL commit to and synchronise the configured branch only (default `main`); it SHALL NOT create, switch or delete branches. If the clone is not on that branch at startup, the server MUST refuse to start.
@@ -99,7 +103,7 @@ The server SHALL provide `kb_restore(path, revision)` that writes the content of
 - **THEN** the file is recreated with that content, indexed, and committed
 
 ### Requirement: Sync status and manual sync
-The server SHALL provide `kb_sync_status()` returning branch, ahead/behind counts, state (`ok`, `offline`), times of last successful pull and push, the last error, and `conflicts` (paths of notes that currently contain conflict markers); and `kb_sync_now()` triggering an immediate pull and push and returning the resulting status.
+The server SHALL provide `kb_sync_status()` returning branch, ahead/behind counts, state (`ok`, `offline`, `conflict`), times of last successful pull and push, the last error, and `conflicts` (conflicted paths while a merge is in progress); and `kb_sync_now()` triggering an immediate pull and push and returning the resulting status.
 
 #### Scenario: Healthy status
 - **WHEN** everything is pushed and the remote is reachable
