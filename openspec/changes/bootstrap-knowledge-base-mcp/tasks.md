@@ -47,7 +47,7 @@
 - [ ] 7.3 Implement pull-before-write with freshness window, periodic pull (merge), debounced/retried async push, branch guard; verify tests with a bare remote and a competing clone
 - [ ] 7.4 Implement conflict handling: commit the merge as Git leaves it (markers kept, modify/delete case), conflicted paths in the message, `conflicts` in sync status, re-index of conflicted files; verify tests that both sides survive and the path clears after a client write
 - [ ] 7.5 Surface conflicts to the writer: `merge_conflict` error with `content`/`ours`/`theirs`/`etag` when the pre-write pull conflicts on the target, current content in stale-`etag` `conflict` errors, `conflict_markers_present` warning; verify an end-to-end test where a client resolves and saves
-- [ ] 7.5 Implement `kb_log`, `kb_history`, `kb_ls_tree`, `kb_show_revision`, `kb_diff`, `kb_restore` (including deleted notes), `kb_sync_status`, `kb_sync_now`; verify tests
+- [ ] 7.6 Implement `kb_log`, `kb_history`, `kb_ls_tree`, `kb_show_revision`, `kb_diff`, `kb_restore` (including deleted notes), `kb_sync_status`, `kb_sync_now`; verify tests
 
 ## 8. Transport and server
 
