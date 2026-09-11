@@ -34,9 +34,9 @@
 
 ## 6. Schema validation
 
-- [ ] 7.0 Implement YAML validity checks with line-pointing errors and ambiguous-scalar quoting on serialise; verify tests for unquoted colons and round-trips
-- [ ] 6.0.1 Implement `_schema.yaml` loading (nearest-wins, cache with invalidation on write/pull) and the validator (required, types, enum, pattern, items, filename_pattern, additionalProperties); verify table tests
-- [ ] 6.0.2 Implement `kb_validate` and wire strict/warn enforcement into all write tools; verify tests that strict rejects and warn returns `warnings`
+- [ ] 6.1 Implement YAML validity checks with line-pointing errors and ambiguous-scalar quoting on serialise; verify tests for unquoted colons and round-trips
+- [ ] 6.2 Implement `_schema.yaml` loading (nearest-wins, cache with invalidation on write/pull) and the validator (required, types, enum, pattern, items, filename_pattern, additionalProperties); verify table tests
+- [ ] 6.3 Implement `kb_validate` and wire strict/warn enforcement into all write tools; verify tests that strict rejects and warn returns `warnings`
 
 ## 7. Write tools
 

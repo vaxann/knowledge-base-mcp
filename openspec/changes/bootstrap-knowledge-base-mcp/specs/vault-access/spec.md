@@ -74,9 +74,9 @@ Files that are not Markdown notes (attachments such as PDF or images) SHALL appe
 - **WHEN** a client calls a write tool on `scan.pdf`
 - **THEN** the call fails with code `unsupported_file`
 
-### Requirement: Secrets never live in tracked files
-The server SHALL read secrets (HTTP token) only from environment variables or a configuration file outside the project repository, and MUST NOT log them. The project repository SHALL contain only an example configuration with placeholder values.
+### Requirement: Credentials never live in tracked files or logs
+The server SHALL hold no credentials of its own: Git authentication comes from the host or container Git setup (SSH key, credential helper, or an HTTPS token consumed by Git through an environment variable). The server MUST NOT write credentials to the vault, the index, its configuration, or logs. The project repository SHALL contain only an example configuration with placeholder values.
 
-#### Scenario: Token in environment
-- **WHEN** `KB_HTTP_TOKEN` is set and logging is at debug level
-- **THEN** the token value never appears in any log line
+#### Scenario: HTTPS token in environment
+- **WHEN** a Git token is provided through the environment and logging is at debug level
+- **THEN** the token value never appears in any log line, and no file under the vault or index directory contains it
