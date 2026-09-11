@@ -82,6 +82,7 @@ type Stamp struct {
 // Indexer is the full-text index abstraction.
 type Indexer interface {
 	Upsert(ctx context.Context, doc Document) error
+	UpsertMany(ctx context.Context, docs []Document) error
 	Delete(ctx context.Context, path string) error
 	Search(ctx context.Context, req Request) (Result, error)
 	Count() (uint64, error)
@@ -192,6 +193,24 @@ func (b *BleveIndex) Upsert(_ context.Context, doc Document) error {
 		doc.Folder = ""
 	}
 	return b.idx.Index(doc.Path, doc)
+}
+
+// UpsertMany indexes documents in one batch.
+func (b *BleveIndex) UpsertMany(_ context.Context, docs []Document) error {
+	batch := b.idx.NewBatch()
+	for _, doc := range docs {
+		if doc.Source == "" {
+			doc.Source = "note"
+		}
+		doc.Folder = path.Dir(doc.Path)
+		if doc.Folder == "." {
+			doc.Folder = ""
+		}
+		if err := batch.Index(doc.Path, doc); err != nil {
+			return err
+		}
+	}
+	return b.idx.Batch(batch)
 }
 
 // Delete removes a document.
