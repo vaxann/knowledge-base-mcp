@@ -29,6 +29,10 @@ func run() int {
 		showVersion = flag.Bool("version", false, "print version and exit")
 		check       = flag.Bool("check", false, "validate configuration and vault, then exit")
 	)
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "usage: knowledge-base-mcp [flags]\n\nServes MCP on stdio, or over streamable HTTP when KB_HTTP_LISTEN is set.\n\n")
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
@@ -56,8 +60,14 @@ func run() int {
 	}
 	svc.Start(ctx)
 	srv := mcpserver.New(svc, version, log)
-	log.Info("serving MCP on stdio", "version", version, "vault", cfg.Vault.Path, "read_only", cfg.Server.ReadOnly)
-	if err := srv.Run(ctx); err != nil && ctx.Err() == nil {
+	log.Info("starting", "version", version, "vault", cfg.Vault.Path, "read_only", cfg.Server.ReadOnly)
+	var runErr error
+	if h := cfg.Server.HTTP; h.Listen != "" {
+		runErr = srv.RunHTTP(ctx, mcpserver.HTTPOptions{Listen: h.Listen, Token: h.Token, TLSCert: h.TLSCert, TLSKey: h.TLSKey})
+	} else {
+		runErr = srv.Run(ctx)
+	}
+	if err := runErr; err != nil && ctx.Err() == nil {
 		log.Error("server stopped", "err", err)
 		return 1
 	}

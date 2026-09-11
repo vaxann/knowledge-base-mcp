@@ -3,11 +3,15 @@ package mcpserver
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -61,6 +65,91 @@ func (s *Server) MCP() *mcp.Server { return s.mcp }
 // Run serves on stdio until ctx is done.
 func (s *Server) Run(ctx context.Context) error {
 	return s.mcp.Run(ctx, &mcp.StdioTransport{})
+}
+
+// HTTPOptions configure the streamable HTTP transport.
+type HTTPOptions struct {
+	Listen  string // host:port
+	Token   string // bearer token; required unless Listen is loopback
+	TLSCert string // optional PEM certificate for direct TLS
+	TLSKey  string // optional PEM key for direct TLS
+}
+
+// IsLoopback reports whether a listen address binds only to localhost.
+func IsLoopback(listen string) bool {
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// Handler returns the HTTP handler: /mcp (bearer-protected streamable HTTP)
+// and /healthz (unauthenticated liveness check).
+func (s *Server) Handler(token string) http.Handler {
+	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s.mcp },
+		&mcp.StreamableHTTPOptions{Logger: s.log, DisableLocalhostProtection: token != ""})
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}` + "\n"))
+	})
+	mux.Handle("/mcp", bearerAuth(token, mcpHandler))
+	mux.Handle("/mcp/", bearerAuth(token, mcpHandler))
+	return mux
+}
+
+func bearerAuth(token string, next http.Handler) http.Handler {
+	if token == "" {
+		return next
+	}
+	want := []byte(token)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !ok || subtle.ConstantTimeCompare([]byte(strings.TrimSpace(got)), want) != 1 {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="knowledge-base-mcp"`)
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RunHTTP serves the streamable HTTP transport until ctx is done. A bearer
+// token is mandatory unless the listen address is loopback.
+func (s *Server) RunHTTP(ctx context.Context, o HTTPOptions) error {
+	if o.Token == "" && !IsLoopback(o.Listen) {
+		return fmt.Errorf("refusing to listen on %s without a token: set KB_HTTP_TOKEN or bind to 127.0.0.1", o.Listen)
+	}
+	if o.Token == "" {
+		s.log.Warn("HTTP transport without a token: only safe because it is bound to loopback", "listen", o.Listen)
+	}
+	srv := &http.Server{Addr: o.Listen, Handler: s.Handler(o.Token), ReadHeaderTimeout: 10 * time.Second}
+	errCh := make(chan error, 1)
+	go func() {
+		if o.TLSCert != "" || o.TLSKey != "" {
+			s.log.Info("serving MCP over HTTPS", "listen", o.Listen, "endpoint", "/mcp")
+			errCh <- srv.ListenAndServeTLS(o.TLSCert, o.TLSKey)
+			return
+		}
+		s.log.Info("serving MCP over HTTP", "listen", o.Listen, "endpoint", "/mcp")
+		errCh <- srv.ListenAndServe()
+	}()
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return srv.Shutdown(shutdownCtx)
+	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	}
 }
 
 // ---- tool plumbing ----

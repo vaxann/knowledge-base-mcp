@@ -22,6 +22,9 @@ ENV KB_VAULT_PATH=/data/vault \
     KB_INDEX_DIR=/data/index \
     HOME=/home/kb
 VOLUME ["/data/vault", "/data/index"]
-# stdio only: no ports are exposed on purpose.
+# Only used when KB_HTTP_LISTEN is set (compose does); stdio mode opens no port.
+EXPOSE 8765
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD [ -z "$KB_HTTP_LISTEN" ] || wget -qO- "http://127.0.0.1:${KB_HTTP_LISTEN##*:}/healthz" >/dev/null || exit 1
 ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/entrypoint.sh"]
 CMD ["knowledge-base-mcp"]

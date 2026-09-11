@@ -10,17 +10,18 @@ An [MCP](https://modelcontextprotocol.io) server, written in Go, that gives AI a
 - **Read notes** — get a note with parsed YAML frontmatter, headings, tags, outgoing links and backlinks; list folders; query notes by frontmatter fields (Dataview‑style).
 - **Edit notes** — create, replace or patch content (append, replace a section, set frontmatter keys), rename and delete, with optimistic concurrency. The server is a data-access layer: no templates, no magic link rewriting, the calling model stays in control.
 - **Versioning for free** — every change is an atomic Git commit under a dedicated author on `main`; the server pulls and pushes automatically and lets clients walk the log, list the tree at any revision, read and diff old versions (deleted notes included) and restore them. History is never rewritten.
-- **Runs anywhere your agent runs** — stdio only, as a binary or a multi-arch container (amd64, arm64). Every client gets its own instance with a private clone; the Git remote is the only shared state. When a merge conflicts, the server does not guess: it freezes the merge locally, refuses writes with the full conflict (base, ours, theirs), and lets the agent, which has the context, submit the resolution. Nothing is pushed until then and nothing is ever lost.
+- **Runs anywhere your agent runs** — stdio for desktop clients, or one long-running instance over streamable HTTP protected by a bearer token (Docker Compose included), as a binary or a multi-arch container (amd64, arm64). Every instance has a private clone; the Git remote is the only shared state. When a merge conflicts, the server does not guess: it freezes the merge locally, refuses writes with the full conflict (base, ours, theirs), and lets the agent, which has the context, submit the resolution. Nothing is pushed until then and nothing is ever lost.
 - **Safe by default** — vault‑relative paths only, deny‑listed folders (`.obsidian/`, `.git/`, …), read‑only mode, no note content or secrets in logs.
 
 ## Architecture at a glance
 
 ```
 MCP client (Claude, Cursor, custom agent)
-        │  stdio
+        │  stdio, or HTTP /mcp + bearer token
         ▼
 ┌───────────────────────────────┐
 │  knowledge-base-mcp (Go)      │   (binary or container)
+│  ├─ stdio | HTTP + bearer    │
 │  ├─ tools: kb_search, kb_get… │
 │  ├─ vault: frontmatter, links │
 │  ├─ index: full-text (Bleve)  │
@@ -39,7 +40,7 @@ export KB_GIT_REMOTE=git@github.com:me/my-notes.git    # your vault repository
 knowledge-base-mcp -check                              # validates config, clones, builds the index
 ```
 
-Then register `knowledge-base-mcp` as an MCP command in your client. See [docs/clients.md](docs/clients.md) for Claude Desktop, Claude Code, Cursor and container setups (SSH key or HTTPS token).
+Then register `knowledge-base-mcp` as an MCP command in your client, or run a permanent instance with `docker compose up -d` and connect over HTTP with the token. See [docs/clients.md](docs/clients.md) for Claude Desktop, Claude Code, Cursor, container and Compose setups.
 
 ## Tools
 
@@ -61,6 +62,8 @@ Resources: `kb://note/<path>` (Markdown) and `kb://folder/<path>` (JSON listing)
 | `KB_GIT_REMOTE`   | Remote URL used to bootstrap‑clone if path is empty  |
 | `KB_GIT_TOKEN`    | HTTPS token handed to Git (alternative to an SSH key)|
 | `KB_INDEX_DIR`    | Where the search index is stored                     |
+| `KB_HTTP_LISTEN`  | Serve HTTP at `/mcp` instead of stdio, e.g. `0.0.0.0:8765` |
+| `KB_HTTP_TOKEN`   | Bearer token required on `/mcp` (mandatory off-loopback) |
 | `KB_READ_ONLY`    | Disable all write tools                              |
 
 See [docs/configuration.md](docs/configuration.md) for the full reference and error codes, and [docs/conflicts.md](docs/conflicts.md) for how frozen merges are handed to the client. Real configuration files and credentials are git‑ignored and must never be committed.

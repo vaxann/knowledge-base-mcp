@@ -38,6 +38,7 @@ type Service struct {
 	indexUpdated  time.Time
 	pushRequested chan struct{}
 	instanceID    string
+	lock          *instanceLock
 	stopOnce      sync.Once
 	stop          chan struct{}
 	wg            sync.WaitGroup
@@ -77,7 +78,11 @@ func Open(ctx context.Context, cfg config.Config, log *slog.Logger, version stri
 	if err != nil {
 		return nil, err
 	}
-	s := &Service{cfg: cfg, v: v, repo: repo, cat: search.NewCatalog(), log: log, version: version,
+	lock, err := acquireInstanceLock(cfg.Search.IndexDir)
+	if err != nil {
+		return nil, err
+	}
+	s := &Service{cfg: cfg, v: v, repo: repo, cat: search.NewCatalog(), log: log, version: version, lock: lock,
 		pushRequested: make(chan struct{}, 1), stop: make(chan struct{}), state: "ok"}
 	if repo.HasRemote(ctx, "origin") {
 		s.remote = "origin"
@@ -88,6 +93,7 @@ func Open(ctx context.Context, cfg config.Config, log *slog.Logger, version stri
 		s.instanceID = fmt.Sprintf("%s-%d", host, os.Getpid())
 	}
 	if err := s.openIndex(ctx, false); err != nil {
+		lock.release()
 		return nil, err
 	}
 	if repo.MergeInProgress(ctx) {
@@ -133,6 +139,7 @@ func (s *Service) Close() error {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		err = s.idx.Close()
+		s.lock.release()
 	})
 	return err
 }

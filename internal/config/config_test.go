@@ -68,6 +68,31 @@ func TestLoadBadBool(t *testing.T) {
 	}
 }
 
+func TestHTTPValidation(t *testing.T) {
+	base := map[string]string{"KB_VAULT_PATH": "/v"}
+	cases := []struct {
+		listen, token string
+		ok            bool
+	}{
+		{"127.0.0.1:8765", "", true},
+		{"localhost:8765", "", true},
+		{"0.0.0.0:8765", "", false},
+		{"0.0.0.0:8765", "s3cret", true},
+		{"[::]:8765", "s3cret", true},
+		{"nonsense", "x", false},
+	}
+	for _, c := range cases {
+		env := map[string]string{"KB_HTTP_LISTEN": c.listen, "KB_HTTP_TOKEN": c.token}
+		for k, v := range base {
+			env[k] = v
+		}
+		_, err := Load("", envMap(env))
+		if (err == nil) != c.ok {
+			t.Errorf("listen=%s token=%q: err=%v, want ok=%v", c.listen, c.token, err, c.ok)
+		}
+	}
+}
+
 func TestParseSize(t *testing.T) {
 	cases := map[string]int64{"2MB": 2 << 20, "512KB": 512 << 10, "100": 100, "1gb": 1 << 30}
 	for in, want := range cases {

@@ -23,6 +23,9 @@ Settings come from three layers, each overriding the previous one:
 | `KB_INDEX_DIR` | `search.index_dir` | `$XDG_CACHE_HOME/knowledge-base-mcp/index` | Full-text index location. Must be outside the vault. |
 | `KB_SEARCH_LANGUAGES` | `search.languages` | `ru,en` | Stemmers applied to titles and bodies. |
 | `KB_GREP_MAX_FILE_SIZE` | `search.grep_max_file_size` | `2MB` | Files larger than this are skipped by `kb_grep`. |
+| `KB_HTTP_LISTEN` | `server.http.listen` | — (stdio) | `host:port` to serve streamable HTTP at `/mcp`. A token is mandatory unless the host is loopback. |
+| `KB_HTTP_TOKEN` | `server.http.token` | — | Bearer token every `/mcp` request must send. Never logged. |
+| `KB_HTTP_TLS_CERT` / `KB_HTTP_TLS_KEY` | `server.http.tls_cert` / `tls_key` | — | Serve HTTPS directly instead of relying on a proxy. |
 | `KB_READ_ONLY` | `server.read_only` | `false` | Hide and refuse all write tools. |
 | `KB_LOG_LEVEL` | `server.log_level` | `info` | `debug`, `info`, `warn`, `error`. Logs go to stderr and never contain note content or credentials. |
 

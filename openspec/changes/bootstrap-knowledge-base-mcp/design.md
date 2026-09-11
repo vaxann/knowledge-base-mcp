@@ -6,7 +6,7 @@ See proposal.md for motivation. Constraints that shape the design:
 - Notes may mix Cyrillic and Latin content, so tokenisation and stemming must handle both.
 - Target size: on the order of 1,000–10,000 notes, with attachments that can make the repository hundreds of MB, so the index must never scan binaries.
 - Deployment model: each server instance runs next to its MCP client, typically as a container on a different machine from where humans edit the vault. Every instance owns a private clone and nothing else writes to that work tree. The Git remote (GitHub) is the only shared state; humans keep editing in their own clones. Several instances may be alive at once.
-- Only the `main` branch is used. No branches, no pull requests, no HTTP API: history on `main` is the audit trail.
+- Only the `main` branch is used. No branches, no pull requests: history on `main` is the audit trail.
 - The project repository is public; the maintainer's vault is private. Nothing vault-specific may leak into code, fixtures or docs.
 
 ## Goals / Non-Goals
@@ -66,9 +66,10 @@ Wikilinks resolve by shortest unique path (basename first, then relative path), 
 ### D11. No templates in the server
 Templates are ordinary notes in a folder the user chooses; a client reads one with `kb_get_note` and passes the filled content to `kb_create_note`.
 
-### D12. stdio only, packaged as a multi-arch container
-No HTTP listener: every client launches its own instance (`docker run -i ghcr.io/…` or the binary) and the remote is the rendezvous point. The image is an alpine base with `git` and `openssh-client`, built for `linux/amd64` and `linux/arm64`; volumes for the clone and the index; credentials via a read-only mounted SSH key (`GIT_SSH_COMMAND` set by the entrypoint) or an HTTPS token consumed by a Git credential helper configured at start. Both paths are first-class and covered by tests. Removing HTTP removes the whole auth surface from the server.
-*Alternative:* streamable HTTP with bearer tokens (rejected by the maintainer as unnecessary; can be revisited as a separate change).
+### D12. stdio per client, or one token-protected HTTP instance; packaged as a multi-arch container
+Desktop clients launch the binary or `docker run -i` and talk stdio. For a permanently running instance that several agents (possibly on other machines) share, the same binary serves the SDK's streamable HTTP transport at `/mcp` when `KB_HTTP_LISTEN` is set. Access control is a single bearer token compared in constant time; the server refuses to bind a non-loopback address without one, so an exposed instance is never unauthenticated by accident. TLS is either terminated by a reverse proxy/private network or served directly from a configured cert/key. `docker-compose.yml` wires the long-running mode with health checks and restarts. An exclusive lock on the index directory guarantees one process per clone, which is what keeps the in-process vault lock sufficient.
+*Alternatives:* a container-internal Unix socket with `docker exec` attach (implemented and dropped: cannot reach other machines, and its only access control is filesystem permissions); per-client tokens with revocation (deferred: one token per instance is enough for a personal vault; rotate by restarting with a new `KB_HTTP_TOKEN`).
+The image is an alpine base with `git` and `openssh-client`, built for `linux/amd64` and `linux/arm64`; volumes for the clone and the index; credentials via a read-only mounted SSH key (copied by a root entrypoint that then drops to an unprivileged user) or an HTTPS token consumed by a Git credential helper. Both paths are first-class and covered by tests.
 
 ### D13. Tool surface (v1)
 Read: `kb_get_note`, `kb_get_section`, `kb_list`, `kb_backlinks`, `kb_tags`.
@@ -85,7 +86,8 @@ Resources: `kb://note/<path>` (Markdown), `kb://folder/<path>` (listing).
 - [Two instances editing the same note within seconds] → pull-before-write with a short freshness window shrinks the race; a real collision becomes a frozen merge handed to a client, never a lost edit.
 - [Client resolves badly] → the resolution is one reviewable merge commit with a `KB-Client` trailer; `kb_restore` and `kb_show_revision` recover any side from history.
 - [Push storms from many small edits] → debounce (5 s default) and coalesce; commits remain granular.
-- [Credentials inside a container] → key mounted read-only, never copied, never logged; documented threat model.
+- [Credentials inside a container] → key mounted read-only and copied only into the container's private home, never logged; documented threat model.
+- [HTTP token leaks or is brute-forced] → constant-time compare, 401 without side effects, token only in env, loopback binding by default in Compose, rotation by restart; TLS guidance in docs.
 - [Russian stemming quality] → Snowball is adequate for ranked search; `kb_grep` gives exact matching when stemming gets in the way.
 - [Client forgets to fix links after a rename] → `kb_move_note` returns `referencing_notes`; tool description tells the model to review them.
 

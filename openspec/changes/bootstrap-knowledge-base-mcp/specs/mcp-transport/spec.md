@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines how clients connect to the server and how the server is run: protocol surface, the stdio transport, container deployment, concurrency, observability and operational tools.
+Defines how clients connect to the server and how the server is run: protocol surface, stdio and token-protected HTTP transports, container deployment, concurrency, observability and operational tools.
 
 ## ADDED Requirements
 
@@ -15,19 +15,45 @@ The server SHALL implement the current Model Context Protocol specification for 
 - **WHEN** a tool fails
 - **THEN** the result is marked as an error and contains `code` (for example `not_found`) and `message`
 
-### Requirement: stdio is the only transport
-The server SHALL speak MCP over standard input and output and MUST write logs only to standard error so the protocol stream is never corrupted. No network listener is opened. Each client runs its own server instance next to it; instances share state only through the Git remote.
+### Requirement: stdio transport by default
+WHEN no HTTP listen address is configured, the server SHALL speak MCP over standard input and output and MUST write logs only to standard error so the protocol stream is never corrupted. No network listener is opened in this mode.
 
 #### Scenario: Launched by a client
 - **WHEN** an MCP client launches the binary (or its container) as a subprocess
 - **THEN** initialisation completes and tools are usable, with no non-protocol bytes on stdout
 
-#### Scenario: No listening sockets
-- **WHEN** the server is running
-- **THEN** it holds no listening TCP or Unix sockets
+#### Scenario: No listening sockets in stdio mode
+- **WHEN** the server runs without an HTTP listen address
+- **THEN** it holds no listening TCP sockets
+
+### Requirement: Streamable HTTP transport with bearer authentication
+WHEN an HTTP listen address is configured (`KB_HTTP_LISTEN`), the server SHALL serve MCP over streamable HTTP at `/mcp` and an unauthenticated `GET /healthz`. Every request to `/mcp` MUST carry `Authorization: Bearer <token>` equal to the configured token (compared in constant time); otherwise the server responds `401` with a `WWW-Authenticate` header and executes nothing. The server MUST refuse to start when the address is not loopback and no token is configured. Several clients SHALL be served concurrently by one process, sharing the vault lock. TLS MAY be served directly from a configured certificate and key; otherwise a reverse proxy or private network is expected in front of the port, and the documentation SHALL say so.
+
+#### Scenario: Missing or wrong token
+- **WHEN** a request to `/mcp` arrives without a valid bearer token
+- **THEN** the response is `401` and no tool executes
+
+#### Scenario: Unsafe binding refused
+- **WHEN** the listen address is `0.0.0.0:8765` and no token is set
+- **THEN** the server exits with an error explaining that a token is required
+
+#### Scenario: Concurrent remote clients
+- **WHEN** three clients with the token write notes at the same time
+- **THEN** every write succeeds, history shows one commit per write, and each commit carries the client's `KB-Client` trailer
+
+#### Scenario: Health check
+- **WHEN** a monitor calls `/healthz` without a token
+- **THEN** it receives `200` with `{"status":"ok"}`
+
+### Requirement: One server process per clone
+The server SHALL take an exclusive lock on the index directory at startup and MUST refuse to start, with a message naming the lock, when another instance already holds it, so two processes never operate on the same clone and index.
+
+#### Scenario: Second instance on the same volume
+- **WHEN** a second server starts with the same `KB_INDEX_DIR`
+- **THEN** it exits with an error naming the lock file and the running instance is unaffected
 
 ### Requirement: Runs as a container
-The project SHALL publish a container image containing the server binary and the `git` CLI. On start inside a container the server SHALL clone the configured remote into a mounted volume if the vault path is empty, and reuse the existing clone otherwise. Both credential methods SHALL be supported and documented: a read-only mounted SSH key, and an HTTPS token in an environment variable consumed only by Git; the server MUST NOT persist credentials anywhere else. The image SHALL be published for `linux/amd64` and `linux/arm64`. The container SHALL be usable directly as an MCP command (`docker run -i ...`).
+The project SHALL publish a container image containing the server binary and the `git` CLI. On start inside a container the server SHALL clone the configured remote into a mounted volume if the vault path is empty, and reuse the existing clone otherwise. A Compose file SHALL be provided for a long-running instance serving the HTTP transport with a token, with a health check and automatic restart. Both credential methods SHALL be supported and documented: a read-only mounted SSH key, and an HTTPS token in an environment variable consumed only by Git; the server MUST NOT persist credentials anywhere else. The image SHALL be published for `linux/amd64` and `linux/arm64`. The container SHALL be usable directly as an MCP command (`docker run -i ...`).
 
 #### Scenario: First run with an empty volume
 - **WHEN** the container starts with `KB_GIT_REMOTE` set, an empty volume at `KB_VAULT_PATH` and a mounted SSH key

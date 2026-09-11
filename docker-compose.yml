@@ -1,0 +1,48 @@
+# Long-running knowledge-base-mcp instance reachable over streamable HTTP with
+# a bearer token. Copy .env.example to .env and fill it in, then:
+#   docker compose up -d --build     # first start clones the vault
+#   docker compose logs -f kb
+#   docker compose build --pull && docker compose up -d   # rebuild after changes
+services:
+  kb:
+    build:
+      context: .
+      args:
+        VERSION: ${KB_VERSION:-compose}
+    image: knowledge-base-mcp:local
+    container_name: knowledge-base-mcp
+    restart: unless-stopped
+    init: true
+    environment:
+      KB_GIT_REMOTE: ${KB_GIT_REMOTE:?set KB_GIT_REMOTE in .env}
+      KB_GIT_BRANCH: ${KB_GIT_BRANCH:-main}
+      KB_HTTP_LISTEN: 0.0.0.0:8765
+      KB_HTTP_TOKEN: ${KB_HTTP_TOKEN:?set KB_HTTP_TOKEN in .env (openssl rand -hex 32)}
+      KB_GIT_TOKEN: ${KB_GIT_TOKEN:-}
+      KB_LOG_LEVEL: ${KB_LOG_LEVEL:-info}
+      KB_PULL_INTERVAL: ${KB_PULL_INTERVAL:-60s}
+      KB_INSTANCE_ID: ${KB_INSTANCE_ID:-compose}
+      KB_READ_ONLY: ${KB_READ_ONLY:-false}
+    ports:
+      # Bind to loopback by default; put a TLS reverse proxy (Caddy, nginx,
+      # Traefik) or a private network (Tailscale, WireGuard) in front of it
+      # before changing this to 0.0.0.0.
+      - "${KB_BIND:-127.0.0.1}:${KB_PORT:-8765}:8765"
+    volumes:
+      - kb-vault:/data/vault
+      - kb-index:/data/index
+      # SSH deploy key with write access to the vault repository (optional if
+      # KB_GIT_TOKEN is used with an HTTPS remote).
+      - ${KB_SSH_KEY_FILE:-/dev/null}:/run/secrets/ssh_key:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8765/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 90s
+      retries: 3
+
+volumes:
+  kb-vault:
+    name: kb-vault
+  kb-index:
+    name: kb-index

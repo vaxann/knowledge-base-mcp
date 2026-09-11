@@ -53,7 +53,8 @@
 
 - [x] 8.1 Wire all tools with JSON schemas, English descriptions and stable error codes into the MCP server; verify `tools/list` snapshot test
 - [x] 8.2 Implement stdio transport (logs to stderr only); verify with a smoke test using an MCP client library
-- [x] 8.3 Verify no listening sockets are opened at runtime (test inspects the process)
+- [x] 8.3 Verify no listening sockets are opened in stdio mode (test inspects the process)
+- [x] 8.6 Implement streamable HTTP transport at /mcp with bearer auth (constant-time compare, refuse non-loopback without token), /healthz, optional direct TLS, and the index-directory instance lock; verify 401/200 tests, concurrent-client test and second-instance refusal
 - [x] 8.4 Implement the vault write mutex and concurrent reads; verify a race test (`go test -race`) with parallel clients
 - [x] 8.5 Implement structured logging with redaction of credentials and note bodies; verify a test that log output never contains a note body
 
@@ -61,4 +62,5 @@
 
 - [x] 9.1 Write `docs/` pages: configuration reference, client setup (Claude Desktop, Claude Code, Cursor) for binary and container, both credential methods, the conflict state and how a client resolves it; verify links render on GitHub
 - [x] 9.2 Add Dockerfile (binary + git + openssh-client, entrypoint wiring both `GIT_SSH_COMMAND` and an HTTPS credential helper, clone-on-empty-volume) and goreleaser config for binaries and a multi-arch (`linux/amd64`, `linux/arm64`) GHCR image; verify `docker run -i` answers `initialize` with each credential method
+- [x] 9.4 Add docker-compose.yml and .env.example for a long-running token-protected instance with health check; verify `docker compose up` answers `initialize` with the token and 401 without it
 - [x] 9.3 End-to-end scenario test: create → search → grep → patch → move → delete → ls_tree → restore over a fixture remote; verify it passes in CI

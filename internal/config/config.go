@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -56,6 +57,17 @@ type Search struct {
 type Server struct {
 	ReadOnly bool   `yaml:"read_only"`
 	LogLevel string `yaml:"log_level"`
+	HTTP     HTTP   `yaml:"http"`
+}
+
+// HTTP configures the optional streamable HTTP transport.
+type HTTP struct {
+	Listen string `yaml:"listen"` // empty = stdio
+	// Token is the bearer token. Prefer KB_HTTP_TOKEN over the file; it is
+	// never logged.
+	Token   string `yaml:"token"`
+	TLSCert string `yaml:"tls_cert"`
+	TLSKey  string `yaml:"tls_key"`
 }
 
 // Default returns the built-in defaults.
@@ -119,6 +131,10 @@ func applyEnv(cfg *Config, env func(string) string) error {
 	str("KB_GIT_USERNAME", &cfg.Git.Username)
 	str("KB_INDEX_DIR", &cfg.Search.IndexDir)
 	str("KB_LOG_LEVEL", &cfg.Server.LogLevel)
+	str("KB_HTTP_LISTEN", &cfg.Server.HTTP.Listen)
+	str("KB_HTTP_TOKEN", &cfg.Server.HTTP.Token)
+	str("KB_HTTP_TLS_CERT", &cfg.Server.HTTP.TLSCert)
+	str("KB_HTTP_TLS_KEY", &cfg.Server.HTTP.TLSKey)
 	str("KB_GREP_MAX_FILE_SIZE", &cfg.Search.GrepMaxFileSize)
 	if v := env("KB_EXCLUDE"); v != "" {
 		cfg.Vault.Exclude = splitList(v)
@@ -181,6 +197,20 @@ func (c Config) Validate() error {
 	}
 	if _, err := ParseSize(c.Search.GrepMaxFileSize); err != nil {
 		return fmt.Errorf("search.grep_max_file_size: %w", err)
+	}
+	if h := c.Server.HTTP; h.Listen != "" {
+		host, _, err := net.SplitHostPort(h.Listen)
+		if err != nil {
+			return fmt.Errorf("server.http.listen must be host:port, got %q", h.Listen)
+		}
+		ip := net.ParseIP(host)
+		loopback := host == "localhost" || (ip != nil && ip.IsLoopback())
+		if !loopback && h.Token == "" {
+			return fmt.Errorf("server.http.listen=%s is not loopback: set KB_HTTP_TOKEN (bearer token) before exposing the server", h.Listen)
+		}
+		if (h.TLSCert == "") != (h.TLSKey == "") {
+			return errors.New("server.http.tls_cert and tls_key must be set together")
+		}
 	}
 	switch strings.ToLower(c.Server.LogLevel) {
 	case "debug", "info", "warn", "error":

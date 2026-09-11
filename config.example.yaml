@@ -37,3 +37,12 @@ search:
 server:
   read_only: false
   log_level: info
+  http:
+    # Empty = stdio (the default for desktop clients). Set host:port to serve
+    # streamable HTTP at /mcp for remote clients; a token is then mandatory
+    # unless the address is loopback. Prefer KB_HTTP_TOKEN over this file.
+    listen: ""            # e.g. 0.0.0.0:8765
+    token: ""
+    # Optional direct TLS; otherwise terminate TLS in a reverse proxy.
+    tls_cert: ""
+    tls_key: ""
