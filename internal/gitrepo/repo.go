@@ -113,7 +113,7 @@ func (r *Repo) runIn(ctx context.Context, dir string, args ...string) (string, e
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	start := time.Now()
 	err := cmd.Run()
-	r.log.Debug("git", "args", args, "ms", time.Since(start).Milliseconds(), "ok", err == nil)
+	r.log.Debug("git", "args", logArgs(args), "ms", time.Since(start).Milliseconds(), "ok", err == nil)
 	if err != nil {
 		code := -1
 		var ee *exec.ExitError
@@ -123,6 +123,20 @@ func (r *Repo) runIn(ctx context.Context, dir string, args ...string) (string, e
 		return stdout.String(), &Error{Args: args, Stderr: stderr.String(), Code: code, Err: err}
 	}
 	return stdout.String(), nil
+}
+
+// logArgs hides free-text arguments (commit messages) from logs.
+func logArgs(args []string) []string {
+	if len(args) > 0 && args[0] == "commit" {
+		out := append([]string(nil), args...)
+		for i := 1; i < len(out); i++ {
+			if out[i-1] == "-m" {
+				out[i] = "<message>"
+			}
+		}
+		return out
+	}
+	return args
 }
 
 // Clone clones remote into dir on branch.

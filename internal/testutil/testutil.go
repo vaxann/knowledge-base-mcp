@@ -62,7 +62,7 @@ func CopyFixture(t testing.TB) string {
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(target, data, 0o644)
+		return os.WriteFile(target, data, 0o644) //nolint:gosec // fixture copy inside a temp dir
 	})
 	if err != nil {
 		t.Fatal(err)

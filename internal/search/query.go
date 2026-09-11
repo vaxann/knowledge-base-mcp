@@ -243,13 +243,13 @@ func tokenize(s string) []string {
 	i := 0
 	for i < len(s) {
 		c := s[i]
-		switch {
-		case c == ' ' || c == '\t' || c == '\n':
+		switch c {
+		case ' ', '\t', '\n':
 			i++
-		case c == '(' || c == ')' || c == '[' || c == ']' || c == ',':
+		case '(', ')', '[', ']', ',':
 			toks = append(toks, string(c))
 			i++
-		case c == '"' || c == '\'':
+		case '"', '\'':
 			j := i + 1
 			for j < len(s) && s[j] != c {
 				j++

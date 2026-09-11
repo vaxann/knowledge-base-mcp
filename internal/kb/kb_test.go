@@ -221,7 +221,7 @@ func TestWriteTools(t *testing.T) {
 	if after.Body != alpha.Body || after.Frontmatter["status"] != "done" || after.Frontmatter["priority"] != 3 || !strings.Contains(after.Content, "# a comment") {
 		t.Errorf("frontmatter patch changed more than the key:\n%s", after.Content)
 	}
-	p, err = s.PatchNote(ctx, "Projects/Alpha.md", []PatchOp{
+	p2, err := s.PatchNote(ctx, "Projects/Alpha.md", []PatchOp{
 		{Op: "replace_section", Heading: "## Log", Content: "replaced log"},
 		{Op: "append", Content: "appended line"},
 		{Op: "find_replace", Find: "Zebra", Replace: "Giraffe"},
@@ -230,6 +230,7 @@ func TestWriteTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_ = p2
 	after, _ = s.GetNote(ctx, "Projects/Alpha.md")
 	if !strings.Contains(after.Body, "## Log\n\nreplaced log\n\n## Budget") || !strings.HasSuffix(after.Body, "appended line\n") || strings.Contains(after.Body, "Zebra") || after.Frontmatter["priority"] != nil {
 		t.Errorf("multi-op patch:\n%s", after.Content)

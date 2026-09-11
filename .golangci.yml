@@ -16,6 +16,11 @@ linters:
       excludes:
         - G204 # git CLI is invoked with controlled arguments by design
         - G304 # paths are sandboxed by internal/vault before use
+        - G301 # vault folders are user data and must stay readable (0755)
+        - G302 # notes are committed to Git; 0644 is the conventional mode
+        - G306 # same as G302
+        - G404 # math/rand is only used to generate benchmark fixtures
+        - G122 # fixture copy in tests only
 formatters:
   enable:
     - gofmt

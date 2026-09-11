@@ -282,7 +282,7 @@ func (s *Service) mergeConflictError(ctx context.Context) *Error {
 	rep, err := s.conflictReport(ctx)
 	e := E(CodeMergeConflict, "a merge with the remote has conflicts; resolve them with kb_resolve_conflict before writing")
 	if err == nil {
-		e.With("conflicts", rep.Conflicts).With("remote_commits", rep.RemoteCommits)
+		e = e.With("conflicts", rep.Conflicts).With("remote_commits", rep.RemoteCommits)
 	}
 	return e
 }
@@ -341,9 +341,8 @@ func (s *Service) ResolveConflict(ctx context.Context, summary string, res []Res
 		switch {
 		case r.Delete:
 		case r.Take == "ours" || r.Take == "theirs":
-			if (r.Take == "ours" && !u.Ours) || (r.Take == "theirs" && !u.Theirs) {
-				// that side deleted the file: taking it means deleting
-			}
+			// A side that deleted the file can still be taken: it means deleting.
+			_ = u
 		case r.Take != "":
 			return ResolveResult{}, E(CodeInvalidArgument, "take must be 'ours' or 'theirs' for %s", r.Path)
 		case r.Content != "":

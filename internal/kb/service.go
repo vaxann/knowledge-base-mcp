@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -324,9 +323,4 @@ func sanitizeTrailer(s string) string {
 		}
 		return r
 	}, s)
-}
-
-// absPath returns the absolute path for a checked relative path.
-func (s *Service) absPath(rel string) string {
-	return filepath.Join(s.v.Root, filepath.FromSlash(rel))
 }
