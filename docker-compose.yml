@@ -46,22 +46,6 @@ services:
       start_period: 90s
       retries: 3
 
-  # Optional Cloudflare Tunnel in front of the server. Create a tunnel in the
-  # Cloudflare dashboard (Zero Trust -> Networks -> Tunnels), add a public
-  # hostname pointing at http://kb:8765, put its token in .env as
-  # CLOUDFLARE_TUNNEL_TOKEN, then: docker compose --profile tunnel up -d
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    container_name: knowledge-base-mcp-tunnel
-    profiles: [tunnel]
-    restart: unless-stopped
-    command: tunnel --no-autoupdate run
-    environment:
-      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN in .env}
-    depends_on:
-      kb:
-        condition: service_healthy
-
 volumes:
   kb-vault:
     name: kb-vault
