@@ -18,6 +18,11 @@ services:
       KB_GIT_BRANCH: ${KB_GIT_BRANCH:-main}
       KB_HTTP_LISTEN: 0.0.0.0:8765
       KB_HTTP_TOKEN: ${KB_HTTP_TOKEN:?set KB_HTTP_TOKEN in .env (openssl rand -hex 32)}
+      # Password typed on the OAuth sign-in page (Claude apps). Falls back to KB_HTTP_TOKEN.
+      KB_OAUTH_PASSWORD: ${KB_OAUTH_PASSWORD:-}
+      # Public base URL when behind a proxy/tunnel, e.g. https://kb.example.com.
+      # Optional: derived from X-Forwarded-Proto/Host when empty.
+      KB_PUBLIC_URL: ${KB_PUBLIC_URL:-}
       KB_GIT_TOKEN: ${KB_GIT_TOKEN:-}
       KB_LOG_LEVEL: ${KB_LOG_LEVEL:-info}
       KB_PULL_INTERVAL: ${KB_PULL_INTERVAL:-60s}

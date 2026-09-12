@@ -45,6 +45,25 @@ WHEN an HTTP listen address is configured (`KB_HTTP_LISTEN`), the server SHALL s
 - **WHEN** a monitor calls `/healthz` without a token
 - **THEN** it receives `200` with `{"status":"ok"}`
 
+### Requirement: OAuth sign-in for apps that cannot send a static token
+WHEN the HTTP transport is enabled, the server SHALL also act as an OAuth 2.1 authorization server for its own `/mcp` resource: it SHALL publish RFC 9728 protected-resource metadata (advertised in the `WWW-Authenticate` header of every 401) and RFC 8414 authorization-server metadata, accept RFC 7591 dynamic client registration with `https` redirect URIs (plus `http://localhost` for development), run the authorization code grant with mandatory PKCE `S256`, show a sign-in page where a person enters the configured password, and issue access tokens (24 h) and rotating refresh tokens (90 days). Access tokens SHALL be accepted by `/mcp` exactly like the static token. Registered clients and token hashes SHALL survive restarts. Wrong passwords MUST be delayed and MUST NOT reveal anything. Authorization codes and sign-in requests MUST be single use and short-lived.
+
+#### Scenario: Claude app connector
+- **WHEN** a Claude app adds `https://kb.example.com/mcp` as a connector with sign-in required and no client credentials
+- **THEN** it discovers the metadata, registers itself, sends the user to the sign-in page, and after the correct password obtains tokens that make `/mcp` calls succeed
+
+#### Scenario: Wrong password
+- **WHEN** a wrong password is submitted on the sign-in page
+- **THEN** the response is `401` with the form re-rendered, no code is issued, and the request is delayed by at least one second
+
+#### Scenario: Refresh rotation
+- **WHEN** a client refreshes its token
+- **THEN** it receives a new access and refresh token, and the previous refresh token and its access token stop working
+
+#### Scenario: Restart
+- **WHEN** the server restarts
+- **THEN** previously issued, unexpired tokens keep working and registered clients remain known
+
 ### Requirement: One server process per clone
 The server SHALL take an exclusive lock on the index directory at startup and MUST refuse to start, with a message naming the lock, when another instance already holds it, so two processes never operate on the same clone and index.
 

@@ -9,12 +9,14 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
 	"github.com/vaxann/knowledge-base-mcp/internal/config"
 	"github.com/vaxann/knowledge-base-mcp/internal/kb"
 	"github.com/vaxann/knowledge-base-mcp/internal/mcpserver"
+	"github.com/vaxann/knowledge-base-mcp/internal/oauth"
 )
 
 var version = "dev"
@@ -63,7 +65,20 @@ func run() int {
 	log.Info("starting", "version", version, "vault", cfg.Vault.Path, "read_only", cfg.Server.ReadOnly)
 	var runErr error
 	if h := cfg.Server.HTTP; h.Listen != "" {
-		runErr = srv.RunHTTP(ctx, mcpserver.HTTPOptions{Listen: h.Listen, Token: h.Token, TLSCert: h.TLSCert, TLSKey: h.TLSKey})
+		opts := mcpserver.HTTPOptions{Listen: h.Listen, Token: h.Token, TLSCert: h.TLSCert, TLSKey: h.TLSKey}
+		if pw := firstNonEmpty(h.OAuthPassword, h.Token); pw != "" {
+			statePath := h.OAuthState
+			if statePath == "" {
+				statePath = filepath.Join(cfg.Search.IndexDir, "oauth-state.json")
+			}
+			opts.OAuth, err = oauth.New(oauth.Config{PublicURL: h.PublicURL, Password: pw, StaticToken: h.Token, StatePath: statePath, Logger: log})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "startup error:", err)
+				return 1
+			}
+			log.Info("OAuth sign-in enabled", "public_url", h.PublicURL, "state", statePath)
+		}
+		runErr = srv.RunHTTP(ctx, opts)
 	} else {
 		runErr = srv.Run(ctx)
 	}
@@ -72,6 +87,15 @@ func run() int {
 		return 1
 	}
 	return 0
+}
+
+func firstNonEmpty(v ...string) string {
+	for _, s := range v {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 func newLogger(level string) *slog.Logger {

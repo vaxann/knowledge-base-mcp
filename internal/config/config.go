@@ -68,6 +68,16 @@ type HTTP struct {
 	Token   string `yaml:"token"`
 	TLSCert string `yaml:"tls_cert"`
 	TLSKey  string `yaml:"tls_key"`
+	// PublicURL is the externally visible base URL used in OAuth metadata
+	// (https://kb.example.com). Derived from request headers when empty.
+	PublicURL string `yaml:"public_url"`
+	// OAuthPassword is what a person types on the sign-in page when an app
+	// (for example the Claude apps) connects through OAuth. Falls back to
+	// Token. Never logged.
+	OAuthPassword string `yaml:"oauth_password"`
+	// OAuthState is the file that keeps registered clients and tokens across
+	// restarts. Defaults to <index_dir>/oauth-state.json.
+	OAuthState string `yaml:"oauth_state"`
 }
 
 // Default returns the built-in defaults.
@@ -135,6 +145,9 @@ func applyEnv(cfg *Config, env func(string) string) error {
 	str("KB_HTTP_TOKEN", &cfg.Server.HTTP.Token)
 	str("KB_HTTP_TLS_CERT", &cfg.Server.HTTP.TLSCert)
 	str("KB_HTTP_TLS_KEY", &cfg.Server.HTTP.TLSKey)
+	str("KB_PUBLIC_URL", &cfg.Server.HTTP.PublicURL)
+	str("KB_OAUTH_PASSWORD", &cfg.Server.HTTP.OAuthPassword)
+	str("KB_OAUTH_STATE", &cfg.Server.HTTP.OAuthState)
 	str("KB_GREP_MAX_FILE_SIZE", &cfg.Search.GrepMaxFileSize)
 	if v := env("KB_EXCLUDE"); v != "" {
 		cfg.Vault.Exclude = splitList(v)

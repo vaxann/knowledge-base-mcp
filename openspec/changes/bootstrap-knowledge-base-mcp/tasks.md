@@ -58,6 +58,8 @@
 - [x] 8.4 Implement the vault write mutex and concurrent reads; verify a race test (`go test -race`) with parallel clients
 - [x] 8.5 Implement structured logging with redaction of credentials and note bodies; verify a test that log output never contains a note body
 
+- [x] 8.7 Embed an OAuth 2.1 authorization server (RFC 8414/9728 metadata, RFC 7591 registration, PKCE code flow with password sign-in page, refresh rotation, persisted hashed state) accepted by /mcp alongside the static token; verify a full-flow test including wrong password, single-use code, rotation and restart
+
 ## 9. Documentation and release
 
 - [x] 9.1 Write `docs/` pages: configuration reference, client setup (Claude Desktop, Claude Code, Cursor) for binary and container, both credential methods, the conflict state and how a client resolves it; verify links render on GitHub

@@ -116,6 +116,27 @@ Claude Desktop / Cursor (JSON):
 }
 ```
 
+## Claude apps (iOS, Android, web) and other OAuth-only clients
+
+The Claude apps add remote MCP servers as *custom connectors* and only support OAuth sign-in, not static tokens. The server therefore embeds a small OAuth 2.1 authorization server (RFC 8414/9728 metadata, dynamic client registration, PKCE, refresh tokens). It is on whenever the HTTP transport runs; the sign-in password is `KB_OAUTH_PASSWORD` (falls back to `KB_HTTP_TOKEN`).
+
+1. Expose the server over HTTPS (see below), e.g. `https://kb.example.com`. Set `KB_PUBLIC_URL` to that URL when the proxy does not pass `X-Forwarded-Proto`/`Host` (Cloudflare Tunnel does).
+2. In the Claude app: *Add custom connector*, name `kb`, URL `https://kb.example.com/mcp`, *Requires sign-in* on, Client ID and secret empty (the app registers itself).
+3. Claude opens the server's sign-in page; type `KB_OAUTH_PASSWORD`. The app receives an access token (24 h) and a refresh token (90 days, rotated on use).
+
+Tokens and registered clients are stored hashed in `oauth-state.json` on the index volume; to revoke everything, delete that file and restart. Every wrong password costs one second, and all MCP calls made by the app carry the connector's `KB-Client` name in commit trailers.
+
+### Cloudflare Tunnel
+
+```bash
+cloudflared tunnel create kb
+cloudflared tunnel route dns kb kb.example.com
+# config: ingress hostname kb.example.com -> http://127.0.0.1:8765
+cloudflared tunnel run kb
+```
+
+Cloudflare terminates TLS and forwards `X-Forwarded-Proto: https`, so the OAuth metadata advertises the public URL automatically. Consider adding a Cloudflare Access policy or WAF rules on top; the server's own token and OAuth still gate every call.
+
 **Exposing it beyond localhost.** The Compose file publishes the port on `127.0.0.1` only. To reach it from other machines, either put a TLS reverse proxy (Caddy, nginx, Traefik) in front and keep the bind on loopback, join the host to a private network (Tailscale, WireGuard) and set `KB_BIND` to that interface, or set `KB_HTTP_TLS_CERT`/`KB_HTTP_TLS_KEY` and bind `0.0.0.0`. Never publish the plain-HTTP port on a public interface: the token would travel in clear text.
 
 ## Several instances at once

@@ -25,6 +25,9 @@ Settings come from three layers, each overriding the previous one:
 | `KB_GREP_MAX_FILE_SIZE` | `search.grep_max_file_size` | `2MB` | Files larger than this are skipped by `kb_grep`. |
 | `KB_HTTP_LISTEN` | `server.http.listen` | — (stdio) | `host:port` to serve streamable HTTP at `/mcp`. A token is mandatory unless the host is loopback. |
 | `KB_HTTP_TOKEN` | `server.http.token` | — | Bearer token every `/mcp` request must send. Never logged. |
+| `KB_OAUTH_PASSWORD` | `server.http.oauth_password` | = token | Password for the OAuth sign-in page (Claude apps). Enables the embedded OAuth server together with `KB_HTTP_LISTEN`. |
+| `KB_PUBLIC_URL` | `server.http.public_url` | derived | Public base URL used as OAuth issuer, e.g. `https://kb.example.com`. Derived from `X-Forwarded-Proto`/`Host` when empty. |
+| `KB_OAUTH_STATE` | `server.http.oauth_state` | `<index_dir>/oauth-state.json` | Registered OAuth clients and hashed tokens; keeps sign-ins across restarts. |
 | `KB_HTTP_TLS_CERT` / `KB_HTTP_TLS_KEY` | `server.http.tls_cert` / `tls_key` | — | Serve HTTPS directly instead of relying on a proxy. |
 | `KB_READ_ONLY` | `server.read_only` | `false` | Hide and refuse all write tools. |
 | `KB_LOG_LEVEL` | `server.log_level` | `info` | `debug`, `info`, `warn`, `error`. Logs go to stderr and never contain note content or credentials. |

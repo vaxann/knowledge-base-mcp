@@ -16,6 +16,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/vaxann/knowledge-base-mcp/internal/kb"
+	"github.com/vaxann/knowledge-base-mcp/internal/oauth"
 	"github.com/vaxann/knowledge-base-mcp/internal/vault"
 )
 
@@ -73,6 +74,9 @@ type HTTPOptions struct {
 	Token   string // bearer token; required unless Listen is loopback
 	TLSCert string // optional PEM certificate for direct TLS
 	TLSKey  string // optional PEM key for direct TLS
+	// OAuth, when non-nil, adds the embedded authorization server so apps
+	// that only support OAuth (the Claude apps) can sign in with a password.
+	OAuth *oauth.Server
 }
 
 // IsLoopback reports whether a listen address binds only to localhost.
@@ -88,18 +92,31 @@ func IsLoopback(listen string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// Handler returns the HTTP handler: /mcp (bearer-protected streamable HTTP)
-// and /healthz (unauthenticated liveness check).
+// Handler returns the HTTP handler: /mcp (bearer-protected streamable HTTP),
+// /healthz (unauthenticated liveness check) and, when o.OAuth is set, the
+// OAuth metadata, registration, sign-in and token endpoints.
 func (s *Server) Handler(token string) http.Handler {
+	return s.HandlerWith(HTTPOptions{Token: token})
+}
+
+// HandlerWith builds the handler from full options.
+func (s *Server) HandlerWith(o HTTPOptions) http.Handler {
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s.mcp },
-		&mcp.StreamableHTTPOptions{Logger: s.log, DisableLocalhostProtection: token != ""})
+		&mcp.StreamableHTTPOptions{Logger: s.log, DisableLocalhostProtection: o.Token != "" || o.OAuth != nil})
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok"}` + "\n"))
 	})
-	mux.Handle("/mcp", bearerAuth(token, mcpHandler))
-	mux.Handle("/mcp/", bearerAuth(token, mcpHandler))
+	var protected http.Handler
+	if o.OAuth != nil {
+		o.OAuth.Mount(mux)
+		protected = o.OAuth.Middleware(mcpHandler)
+	} else {
+		protected = bearerAuth(o.Token, mcpHandler)
+	}
+	mux.Handle("/mcp", protected)
+	mux.Handle("/mcp/", protected)
 	return mux
 }
 
@@ -128,7 +145,7 @@ func (s *Server) RunHTTP(ctx context.Context, o HTTPOptions) error {
 	if o.Token == "" {
 		s.log.Warn("HTTP transport without a token: only safe because it is bound to loopback", "listen", o.Listen)
 	}
-	srv := &http.Server{Addr: o.Listen, Handler: s.Handler(o.Token), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: o.Listen, Handler: s.HandlerWith(o), ReadHeaderTimeout: 10 * time.Second}
 	errCh := make(chan error, 1)
 	go func() {
 		if o.TLSCert != "" || o.TLSKey != "" {

@@ -46,3 +46,9 @@ server:
     # Optional direct TLS; otherwise terminate TLS in a reverse proxy.
     tls_cert: ""
     tls_key: ""
+    # OAuth sign-in for apps (Claude connectors): password typed on the sign-in
+    # page (defaults to token), public base URL (derived when empty), and the
+    # state file keeping registered clients and tokens (default: <index_dir>/oauth-state.json).
+    oauth_password: ""
+    public_url: ""
+    oauth_state: ""
