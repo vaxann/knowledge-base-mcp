@@ -40,7 +40,7 @@ export KB_GIT_REMOTE=git@github.com:me/my-notes.git    # your vault repository
 knowledge-base-mcp -check                              # validates config, clones, builds the index
 ```
 
-Then register `knowledge-base-mcp` as an MCP command in your client, or run a permanent instance with `docker compose up -d` and connect over HTTP with the token. See [docs/clients.md](docs/clients.md) for Claude Desktop, Claude Code, Cursor, container and Compose setups.
+Then register `knowledge-base-mcp` as an MCP command in your client, or run a permanent instance with `docker compose up -d` (HTTP on `127.0.0.1:8765`, endpoint `/mcp`) and connect with the token, or through a Cloudflare Tunnel with OAuth sign-in from the Claude apps. See [docs/clients.md](docs/clients.md) for Claude Desktop, Claude Code, Cursor, container, Compose, Claude app and Cloudflare setups.
 
 ## Tools
 

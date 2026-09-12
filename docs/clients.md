@@ -126,16 +126,46 @@ The Claude apps add remote MCP servers as *custom connectors* and only support O
 
 Tokens and registered clients are stored hashed in `oauth-state.json` on the index volume; to revoke everything, delete that file and restart. Every wrong password costs one second, and all MCP calls made by the app carry the connector's `KB-Client` name in commit trailers.
 
+### Ports and paths
+
+| What | Where |
+|---|---|
+| Container listens | `0.0.0.0:8765` inside the container (`KB_HTTP_LISTEN`) |
+| Published on the host | `127.0.0.1:8765` (`KB_BIND`/`KB_PORT` in `.env`), plain HTTP |
+| MCP endpoint | `/mcp` (streamable HTTP; bearer token or OAuth access token) |
+| Health check | `/healthz` (no auth) |
+| OAuth | `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource`, `/oauth/register`, `/oauth/authorize`, `/oauth/token` |
+
+Everything the tunnel or proxy needs to forward is the single origin `http://127.0.0.1:8765`; all paths above live on it.
+
 ### Cloudflare Tunnel
 
+Point the tunnel's public hostname at the host port; Cloudflare terminates TLS.
+
 ```bash
+cloudflared tunnel login
 cloudflared tunnel create kb
 cloudflared tunnel route dns kb kb.example.com
-# config: ingress hostname kb.example.com -> http://127.0.0.1:8765
-cloudflared tunnel run kb
 ```
 
-Cloudflare terminates TLS and forwards `X-Forwarded-Proto: https`, so the OAuth metadata advertises the public URL automatically. Consider adding a Cloudflare Access policy or WAF rules on top; the server's own token and OAuth still gate every call.
+`~/.cloudflared/config.yml`:
+
+```yaml
+tunnel: kb
+credentials-file: /home/me/.cloudflared/<tunnel-id>.json
+ingress:
+  - hostname: kb.example.com
+    service: http://127.0.0.1:8765
+  - service: http_status:404
+```
+
+```bash
+cloudflared tunnel run kb          # or: cloudflared service install
+curl -fsS https://kb.example.com/healthz
+curl -fsS https://kb.example.com/.well-known/oauth-authorization-server | jq .issuer   # must print the public URL
+```
+
+The same works with a dashboard-managed tunnel (Zero Trust → Networks → Tunnels → Public hostname → `HTTP`, `127.0.0.1:8765`). Cloudflare forwards `X-Forwarded-Proto: https` and the public `Host`, so the OAuth metadata advertises `https://kb.example.com` without further configuration; set `KB_PUBLIC_URL` only if the issuer printed above is wrong. Consider a Cloudflare Access policy or WAF rules on top; the server's own token and OAuth still gate every call.
 
 **Exposing it beyond localhost.** The Compose file publishes the port on `127.0.0.1` only. To reach it from other machines, either put a TLS reverse proxy (Caddy, nginx, Traefik) in front and keep the bind on loopback, join the host to a private network (Tailscale, WireGuard) and set `KB_BIND` to that interface, or set `KB_HTTP_TLS_CERT`/`KB_HTTP_TLS_KEY` and bind `0.0.0.0`. Never publish the plain-HTTP port on a public interface: the token would travel in clear text.
 
