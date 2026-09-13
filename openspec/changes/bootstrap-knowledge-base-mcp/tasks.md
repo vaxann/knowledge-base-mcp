@@ -40,6 +40,8 @@
 - [x] 6.4 Implement `kb_move_note` (git rename, `referencing_notes` from the backlink graph) and `kb_delete_note` (permanent, etag-checked); verify tests
 - [x] 6.5 Enforce read-only mode (write tools not listed); verify a test that `tools/list` omits them
 
+- [x] 6.6 Implement attachments: `kb_get_file` (embedded blob, size cap), `kb_upload_file` (base64, one commit), `kb://file/` resource, move/delete on attachments, HMAC-signed download and upload links with `/files/` and `/upload/` routes (page with multipart, PUT with token), nosniff/CSP; verify tool, resource and HTTP tests including tampering, expiry and folder escape
+
 ## 7. Git versioning
 
 - [x] 7.1 Implement the `Repo` interface over the `git` CLI (status, add, commit, fetch, ff/rebase, push, log with --follow, ls-tree, show, diff, rev-parse) plus a fake for tests; verify unit tests against a temp repo

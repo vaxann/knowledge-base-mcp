@@ -29,6 +29,8 @@ Settings come from three layers, each overriding the previous one:
 | `KB_PUBLIC_URL` | `server.http.public_url` | derived | Public base URL used as OAuth issuer, e.g. `https://kb.example.com`. Derived from `X-Forwarded-Proto`/`Host` when empty. |
 | `KB_OAUTH_STATE` | `server.http.oauth_state` | `<index_dir>/oauth-state.json` | Registered OAuth clients and hashed tokens; keeps sign-ins across restarts. |
 | `KB_HTTP_TLS_CERT` / `KB_HTTP_TLS_KEY` | `server.http.tls_cert` / `tls_key` | — | Serve HTTPS directly instead of relying on a proxy. |
+| `KB_MAX_UPLOAD` | `server.max_upload` | `50MB` | Size limit for `kb_upload_file`, `PUT /files/…` and the upload page. |
+| `KB_LINK_TTL` | `server.link_ttl` | `15m` | Default lifetime of signed download/upload links. |
 | `KB_READ_ONLY` | `server.read_only` | `false` | Hide and refuse all write tools. |
 | `KB_LOG_LEVEL` | `server.log_level` | `info` | `debug`, `info`, `warn`, `error`. Logs go to stderr and never contain note content or credentials. |
 
@@ -49,5 +51,6 @@ Every tool failure is a tool error whose JSON payload has a stable `code` and a 
 | `conflict_markers_present` | A resolution still contains `<<<<<<<` markers. |
 | `patch_failed` | A patch operation could not be applied; nothing was written. |
 | `read_only` | The server runs in read-only mode. |
-| `invalid_argument` | Bad glob, regex, date, query or operation. |
+| `invalid_argument` | Bad glob, regex, date, query or operation; signed links requested without a public URL. |
+| `too_large` | File above `max_bytes` (`kb_get_file`) or above `KB_MAX_UPLOAD`. |
 | `no_remote` / `not_in_conflict` | `kb_sync_now` without a remote; `kb_resolve_conflict` without a frozen merge. |

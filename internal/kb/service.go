@@ -39,6 +39,8 @@ type Service struct {
 	pushRequested chan struct{}
 	instanceID    string
 	lock          *instanceLock
+	linkMu        sync.Mutex
+	linkKey       []byte
 	stopOnce      sync.Once
 	stop          chan struct{}
 	wg            sync.WaitGroup
@@ -286,6 +288,9 @@ func (s *Service) State() string {
 	defer s.stateMu.RUnlock()
 	return s.state
 }
+
+// MaxUploadBytes returns the configured upload limit.
+func (s *Service) MaxUploadBytes() int64 { return s.cfg.Server.MaxUploadBytes() }
 
 // ReadOnly reports whether writes are disabled.
 func (s *Service) ReadOnly() bool { return s.cfg.Server.ReadOnly }

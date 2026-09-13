@@ -49,6 +49,7 @@ const (
 	CodeInternal        = "internal"
 	CodeNoRemote        = "no_remote"
 	CodeNotInConflict   = "not_in_conflict"
+	CodeTooLarge        = "too_large"
 )
 
 // wrap converts lower-level errors into tool errors.

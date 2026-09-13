@@ -261,16 +261,19 @@ func appendText(body []byte, eol, text string) []byte {
 	return []byte(b + strings.TrimRight(text, "\n") + eol)
 }
 
-// MoveNote renames a note without touching other notes.
+// MoveNote renames a note or attachment without touching other notes.
 func (s *Service) MoveNote(ctx context.Context, from, to, summary string) (*WriteResult, error) {
 	return s.mutate(ctx, func() (*mutation, error) {
-		src, err := s.checkNotePath(from)
+		src, err := s.checkFilePath(from)
 		if err != nil {
 			return nil, err
 		}
-		dst, err := s.checkNotePath(to)
+		dst, err := s.checkFilePath(to)
 		if err != nil {
 			return nil, err
+		}
+		if vault.IsMarkdown(src) != vault.IsMarkdown(dst) {
+			return nil, E(CodeInvalidPath, "cannot change a file between note (.md) and attachment when moving")
 		}
 		if !s.v.Exists(src) {
 			return nil, E(CodeNotFound, "%s", src)
@@ -293,19 +296,19 @@ func (s *Service) MoveNote(ctx context.Context, from, to, summary string) (*Writ
 	})
 }
 
-// DeleteNote removes a note permanently (Git keeps the history).
+// DeleteNote removes a note or attachment permanently (Git keeps the history).
 func (s *Service) DeleteNote(ctx context.Context, path, etag, summary string) (*WriteResult, error) {
 	return s.mutate(ctx, func() (*mutation, error) {
-		clean, err := s.checkNotePath(path)
+		clean, err := s.checkFilePath(path)
 		if err != nil {
 			return nil, err
 		}
-		n, err := s.v.ReadNote(clean)
+		data, _, err := s.v.Read(clean)
 		if err != nil {
 			return nil, err
 		}
-		if etag != "" && etag != n.ETag {
-			return nil, etagConflict(n)
+		if etag != "" && etag != vault.ETagOf(data) {
+			return nil, E(CodeConflict, "%s changed since the etag was obtained", clean).With("etag", vault.ETagOf(data))
 		}
 		if err := s.v.Remove(clean); err != nil {
 			return nil, err

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -22,17 +23,22 @@ import (
 
 // Server wraps an MCP server bound to one kb.Service.
 type Server struct {
-	svc *kb.Service
-	mcp *mcp.Server
-	log *slog.Logger
+	svc       *kb.Service
+	mcp       *mcp.Server
+	log       *slog.Logger
+	urlMu     sync.RWMutex
+	pubURL    string
+	maxUpload int64
 }
+
+func jsonMarshal(v any) ([]byte, error) { return json.Marshal(v) }
 
 // New registers every tool and resource.
 func New(svc *kb.Service, version string, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	s := &Server{svc: svc, log: log}
+	s := &Server{svc: svc, log: log, maxUpload: svc.MaxUploadBytes()}
 	s.mcp = mcp.NewServer(&mcp.Implementation{Name: "knowledge-base-mcp", Version: version}, &mcp.ServerOptions{
 		Instructions: instructions(svc.ReadOnly()),
 	})
@@ -40,6 +46,7 @@ func New(svc *kb.Service, version string, log *slog.Logger) *Server {
 	s.registerSearchTools()
 	s.registerGitTools()
 	s.registerOpsTools()
+	s.registerFileTools()
 	if !svc.ReadOnly() {
 		s.registerWriteTools()
 	}
@@ -77,6 +84,8 @@ type HTTPOptions struct {
 	// OAuth, when non-nil, adds the embedded authorization server so apps
 	// that only support OAuth (the Claude apps) can sign in with a password.
 	OAuth *oauth.Server
+	// PublicURL is the base for signed file links (https://kb.example.com).
+	PublicURL string
 }
 
 // IsLoopback reports whether a listen address binds only to localhost.
@@ -109,14 +118,27 @@ func (s *Server) HandlerWith(o HTTPOptions) http.Handler {
 		_, _ = w.Write([]byte(`{"status":"ok"}` + "\n"))
 	})
 	var protected http.Handler
+	var authed func(*http.Request) bool
 	if o.OAuth != nil {
 		o.OAuth.Mount(mux)
 		protected = o.OAuth.Middleware(mcpHandler)
+		authed = func(r *http.Request) bool {
+			tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+			return ok && o.OAuth.Valid(strings.TrimSpace(tok))
+		}
 	} else {
 		protected = bearerAuth(o.Token, mcpHandler)
+		authed = func(r *http.Request) bool {
+			tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+			return ok && o.Token != "" && subtle.ConstantTimeCompare([]byte(strings.TrimSpace(tok)), []byte(o.Token)) == 1
+		}
 	}
 	mux.Handle("/mcp", protected)
 	mux.Handle("/mcp/", protected)
+	if o.PublicURL != "" {
+		s.SetPublicURL(o.PublicURL)
+	}
+	s.fileRoutes(mux, authed)
 	return mux
 }
 
@@ -230,6 +252,10 @@ func (s *Server) registerResources() {
 		Name: "folder", URITemplate: "kb://folder/{+path}", MIMEType: "application/json",
 		Description: "JSON listing of a folder, e.g. kb://folder/Projects (kb://folder/ for the root)",
 	}, s.readResource)
+	s.mcp.AddResourceTemplate(&mcp.ResourceTemplate{
+		Name: "file", URITemplate: "kb://file/{+path}",
+		Description: "Raw bytes of any vault file (PDF, image, ...) as a blob, e.g. kb://file/Files/scan.pdf",
+	}, s.readResource)
 	s.mcp.AddResource(&mcp.Resource{Name: "root", URI: "kb://folder/", MIMEType: "application/json", Description: "Listing of the vault root"}, s.readResource)
 }
 
@@ -243,6 +269,12 @@ func (s *Server) readResource(ctx context.Context, req *mcp.ReadResourceRequest)
 			return nil, mcp.ResourceNotFoundError(uri)
 		}
 		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: uri, MIMEType: "text/markdown", Text: n.Content}}}, nil
+	case strings.HasPrefix(uri, "kb://file/"):
+		data, info, err := s.svc.ReadFile(ctx, strings.TrimPrefix(uri, "kb://file/"), 0)
+		if err != nil {
+			return nil, mcp.ResourceNotFoundError(uri)
+		}
+		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: uri, MIMEType: info.MediaType, Blob: data}}}, nil
 	case strings.HasPrefix(uri, "kb://folder/"):
 		folder := strings.TrimPrefix(uri, "kb://folder/")
 		res, err := s.svc.List(ctx, kb.ListRequest{Folder: folder, Limit: 1000})

@@ -9,6 +9,7 @@ An [MCP](https://modelcontextprotocol.io) server, written in Go, that gives AI a
 - **Fast search, three ways** — ranked full-text search with Cyrillic and Latin stemming and frontmatter filters; grep-style exact or regex matching across all notes; Dataview-style metadata queries. A "context bundle" tool returns the most relevant sections within a size budget, so any LLM can answer questions about the vault with a single call.
 - **Read notes** — get a note with parsed YAML frontmatter, headings, tags, outgoing links and backlinks; list folders; query notes by frontmatter fields (Dataview‑style).
 - **Edit notes** — create, replace or patch content (append, replace a section, set frontmatter keys), rename and delete, with optimistic concurrency. The server is a data-access layer: no templates, no magic link rewriting, the calling model stays in control.
+- **Attachments too** — PDFs, photos and documents can be fetched and stored through MCP, and exchanged with a phone or browser through short-lived signed download/upload links, all committed like notes.
 - **Versioning for free** — every change is an atomic Git commit under a dedicated author on `main`; the server pulls and pushes automatically and lets clients walk the log, list the tree at any revision, read and diff old versions (deleted notes included) and restore them. History is never rewritten.
 - **Runs anywhere your agent runs** — stdio for desktop clients, or one long-running instance over streamable HTTP protected by a bearer token, with built-in OAuth sign-in for the Claude apps' custom connectors (Docker Compose included), as a binary or a multi-arch container (amd64, arm64). Every instance has a private clone; the Git remote is the only shared state. When a merge conflicts, the server does not guess: it freezes the merge locally, refuses writes with the full conflict (base, ours, theirs), and lets the agent, which has the context, submit the resolution. Nothing is pushed until then and nothing is ever lost.
 - **Safe by default** — vault‑relative paths only, deny‑listed folders (`.obsidian/`, `.git/`, …), read‑only mode, no note content or secrets in logs.
@@ -50,9 +51,10 @@ Then register `knowledge-base-mcp` as an MCP command in your client, or run a pe
 | Search | `kb_search`, `kb_grep`, `kb_query`, `kb_context`, `kb_quick_open` |
 | Write | `kb_create_note`, `kb_replace_note`, `kb_patch_note`, `kb_move_note`, `kb_delete_note`, `kb_restore`, `kb_resolve_conflict` |
 | History & sync | `kb_log`, `kb_history`, `kb_ls_tree`, `kb_show_revision`, `kb_diff`, `kb_sync_status`, `kb_sync_now`, `kb_conflicts` |
+| Files | `kb_get_file`, `kb_upload_file`, `kb_file_link`, `kb_upload_link` |
 | Ops | `kb_info`, `kb_reindex` |
 
-Resources: `kb://note/<path>` (Markdown) and `kb://folder/<path>` (JSON listing).
+Resources: `kb://note/<path>` (Markdown), `kb://folder/<path>` (JSON listing) and `kb://file/<path>` (binary blob).
 
 ## Configuration
 

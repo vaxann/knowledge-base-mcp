@@ -20,7 +20,7 @@ import (
 	"github.com/vaxann/knowledge-base-mcp/internal/testutil"
 )
 
-const wantTools = 27
+const wantTools = 31
 
 func newSession(t *testing.T, readOnly bool) (*mcp.ClientSession, string) {
 	t.Helper()
@@ -116,12 +116,12 @@ func TestToolsList(t *testing.T) {
 	}
 	ro, _ := newSession(t, true)
 	res, _ = ro.ListTools(context.Background(), nil)
-	if len(res.Tools) != wantTools-7 {
+	if len(res.Tools) != wantTools-9 {
 		t.Errorf("read-only tool count = %d", len(res.Tools))
 	}
 	for _, tool := range res.Tools {
 		switch tool.Name {
-		case "kb_create_note", "kb_replace_note", "kb_patch_note", "kb_move_note", "kb_delete_note", "kb_restore", "kb_resolve_conflict":
+		case "kb_create_note", "kb_replace_note", "kb_patch_note", "kb_move_note", "kb_delete_note", "kb_restore", "kb_resolve_conflict", "kb_upload_file", "kb_upload_link":
 			t.Errorf("write tool %s listed in read-only mode", tool.Name)
 		}
 	}
@@ -148,7 +148,7 @@ func TestErrorShapeAndResources(t *testing.T) {
 		t.Error("missing resource must error")
 	}
 	tpl, err := sess.ListResourceTemplates(context.Background(), nil)
-	if err != nil || len(tpl.ResourceTemplates) != 2 {
+	if err != nil || len(tpl.ResourceTemplates) != 3 {
 		t.Errorf("templates: %+v %v", tpl, err)
 	}
 }

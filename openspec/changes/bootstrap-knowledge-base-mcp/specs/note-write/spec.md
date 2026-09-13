@@ -50,14 +50,14 @@ The server SHALL provide `kb_patch_note(path, operations, etag)` applying an ord
 - **THEN** the call fails with code `patch_failed` and no operation is applied
 
 ### Requirement: Move or rename without touching other notes
-The server SHALL provide `kb_move_note(from, to)` that renames a note inside the vault as a Git rename. It MUST fail with `already_exists` if `to` exists and with `not_found` if `from` does not. The server SHALL NOT rewrite links in other notes; instead the result SHALL list the notes that linked to the old path (from the backlink graph) so the client can update them with `kb_grep` and `kb_patch_note` if it chooses to.
+The server SHALL provide `kb_move_note(from, to)` that renames a note (or an attachment) inside the vault as a Git rename. It MUST fail with `already_exists` if `to` exists and with `not_found` if `from` does not. The server SHALL NOT rewrite links in other notes; instead the result SHALL list the notes that linked to the old path (from the backlink graph) so the client can update them with `kb_grep` and `kb_patch_note` if it chooses to.
 
 #### Scenario: Rename with backlinks
 - **WHEN** `Old.md` is moved to `Archive/New.md` and two notes link `[[Old]]`
 - **THEN** only the rename is committed, and the result lists those two notes as `referencing_notes`
 
 ### Requirement: Delete a note permanently
-The server SHALL provide `kb_delete_note(path, etag)` that removes the file from the work tree and commits the deletion. There is no trash folder; recovery is done through Git history with `kb_restore`.
+The server SHALL provide `kb_delete_note(path, etag)` that removes the file (note or attachment) from the work tree and commits the deletion. There is no trash folder; recovery is done through Git history with `kb_restore`.
 
 #### Scenario: Delete and recover
 - **WHEN** a client deletes `Inbox/Draft.md` and later calls `kb_restore("Inbox/Draft.md", "<commit before deletion>")`

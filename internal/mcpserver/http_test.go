@@ -19,6 +19,9 @@ import (
 	"github.com/vaxann/knowledge-base-mcp/internal/testutil"
 )
 
+// lastServer is the Server built by the most recent newHTTPServer call.
+var lastServer *Server
+
 type bearer struct {
 	token string
 	next  http.RoundTripper
@@ -46,6 +49,7 @@ func newHTTPServer(t *testing.T, token string) (*httptest.Server, string) {
 	}
 	t.Cleanup(func() { _ = svc.Close() })
 	srv := New(svc, "test", log)
+	lastServer = srv
 	ts := httptest.NewServer(srv.Handler(token))
 	t.Cleanup(ts.Close)
 	return ts, vaultDir

@@ -21,6 +21,7 @@ linters:
         - G306 # same as G302
         - G404 # math/rand is only used to generate benchmark fixtures
         - G122 # fixture copy in tests only
+        - G107 # tests request URLs built from httptest servers
 formatters:
   enable:
     - gofmt

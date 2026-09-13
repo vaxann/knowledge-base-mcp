@@ -72,13 +72,18 @@ For clients that only speak OAuth (the Claude iOS/Android/web connectors), the b
 *Alternatives:* a container-internal Unix socket with `docker exec` attach (implemented and dropped: cannot reach other machines, and its only access control is filesystem permissions); per-client tokens with revocation (deferred: one token per instance is enough for a personal vault; rotate by restarting with a new `KB_HTTP_TOKEN`).
 The image is an alpine base with `git` and `openssh-client`, built for `linux/amd64` and `linux/arm64`; volumes for the clone and the index; credentials via a read-only mounted SSH key (copied by a root entrypoint that then drops to an unprivileged user) or an HTTPS token consumed by a Git credential helper. Both paths are first-class and covered by tests.
 
+### D13a. Attachments travel as bytes through MCP, and as signed links for humans
+A model cannot move a file from a chat into a tool call, so two paths exist. Programmatic clients use `kb_get_file` (embedded binary resource) and `kb_upload_file` (base64). People use links: `kb_file_link` and `kb_upload_link` return HMAC-signed URLs (`/files/<path>`, `/upload/<path>`) on the public base that a browser or phone can open without logging in until they expire. The key is generated once and kept next to the index, so links survive restarts; the same routes also accept the bearer/OAuth token for scripts. Served files carry `nosniff` and a sandboxing CSP because vault content is untrusted to a browser. Attachments are still not text-indexed (phase 2).
+*Alternatives:* multipart upload inside MCP (not in the protocol); presigned object storage (extra service).
+
 ### D13. Tool surface (v1)
 Read: `kb_get_note`, `kb_get_section`, `kb_list`, `kb_backlinks`, `kb_tags`.
 Search: `kb_search`, `kb_grep`, `kb_query`, `kb_context`, `kb_quick_open`.
 Write: `kb_create_note`, `kb_replace_note`, `kb_patch_note`, `kb_move_note`, `kb_delete_note`.
 Git: `kb_log`, `kb_history`, `kb_ls_tree`, `kb_show_revision`, `kb_diff`, `kb_restore`, `kb_sync_status`, `kb_sync_now`, `kb_conflicts`, `kb_resolve_conflict`.
+Files: `kb_get_file`, `kb_upload_file`, `kb_file_link`, `kb_upload_link` (plus `kb_move_note`/`kb_delete_note` on attachments).
 Ops: `kb_info`, `kb_reindex`.
-Resources: `kb://note/<path>` (Markdown), `kb://folder/<path>` (listing).
+Resources: `kb://note/<path>` (Markdown), `kb://folder/<path>` (listing), `kb://file/<path>` (blob).
 
 ## Risks / Trade-offs
 

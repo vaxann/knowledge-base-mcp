@@ -65,7 +65,10 @@ func run() int {
 	log.Info("starting", "version", version, "vault", cfg.Vault.Path, "read_only", cfg.Server.ReadOnly)
 	var runErr error
 	if h := cfg.Server.HTTP; h.Listen != "" {
-		opts := mcpserver.HTTPOptions{Listen: h.Listen, Token: h.Token, TLSCert: h.TLSCert, TLSKey: h.TLSKey}
+		opts := mcpserver.HTTPOptions{Listen: h.Listen, Token: h.Token, TLSCert: h.TLSCert, TLSKey: h.TLSKey, PublicURL: h.PublicURL}
+		if opts.PublicURL == "" && mcpserver.IsLoopback(h.Listen) {
+			opts.PublicURL = "http://" + h.Listen
+		}
 		if pw := firstNonEmpty(h.OAuthPassword, h.Token); pw != "" {
 			statePath := h.OAuthState
 			if statePath == "" {

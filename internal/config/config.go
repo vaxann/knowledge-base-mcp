@@ -58,6 +58,16 @@ type Server struct {
 	ReadOnly bool   `yaml:"read_only"`
 	LogLevel string `yaml:"log_level"`
 	HTTP     HTTP   `yaml:"http"`
+	// MaxUpload caps file uploads (kb_upload_file and HTTP uploads).
+	MaxUpload string `yaml:"max_upload"`
+	// LinkTTL is the default lifetime of signed download/upload links.
+	LinkTTL time.Duration `yaml:"link_ttl"`
+}
+
+// MaxUploadBytes returns the parsed upload limit.
+func (s Server) MaxUploadBytes() int64 {
+	n, _ := ParseSize(s.MaxUpload)
+	return n
 }
 
 // HTTP configures the optional streamable HTTP transport.
@@ -99,7 +109,7 @@ func Default() Config {
 			Languages:       []string{"ru", "en"},
 			GrepMaxFileSize: "2MB",
 		},
-		Server: Server{LogLevel: "info"},
+		Server: Server{LogLevel: "info", MaxUpload: "50MB", LinkTTL: 15 * time.Minute},
 	}
 }
 
@@ -148,6 +158,7 @@ func applyEnv(cfg *Config, env func(string) string) error {
 	str("KB_PUBLIC_URL", &cfg.Server.HTTP.PublicURL)
 	str("KB_OAUTH_PASSWORD", &cfg.Server.HTTP.OAuthPassword)
 	str("KB_OAUTH_STATE", &cfg.Server.HTTP.OAuthState)
+	str("KB_MAX_UPLOAD", &cfg.Server.MaxUpload)
 	str("KB_GREP_MAX_FILE_SIZE", &cfg.Search.GrepMaxFileSize)
 	if v := env("KB_EXCLUDE"); v != "" {
 		cfg.Vault.Exclude = splitList(v)
@@ -181,6 +192,7 @@ func applyEnv(cfg *Config, env func(string) string) error {
 	durEnv("KB_PUSH_DEBOUNCE", &cfg.Git.PushDebounce)
 	durEnv("KB_PULL_INTERVAL", &cfg.Git.PullInterval)
 	durEnv("KB_PULL_FRESHNESS", &cfg.Git.PullFreshness)
+	durEnv("KB_LINK_TTL", &cfg.Server.LinkTTL)
 	return err
 }
 
@@ -210,6 +222,9 @@ func (c Config) Validate() error {
 	}
 	if _, err := ParseSize(c.Search.GrepMaxFileSize); err != nil {
 		return fmt.Errorf("search.grep_max_file_size: %w", err)
+	}
+	if _, err := ParseSize(c.Server.MaxUpload); err != nil {
+		return fmt.Errorf("server.max_upload: %w", err)
 	}
 	if h := c.Server.HTTP; h.Listen != "" {
 		host, _, err := net.SplitHostPort(h.Listen)

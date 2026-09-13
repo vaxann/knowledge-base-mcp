@@ -37,6 +37,10 @@ search:
 server:
   read_only: false
   log_level: info
+  # Limits for attachments: uploads (kb_upload_file, /files, upload page) and
+  # the default lifetime of signed download/upload links.
+  max_upload: 50MB
+  link_ttl: 15m
   http:
     # Empty = stdio (the default for desktop clients). Set host:port to serve
     # streamable HTTP at /mcp for remote clients; a token is then mandatory

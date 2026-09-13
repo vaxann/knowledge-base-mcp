@@ -167,6 +167,26 @@ curl -fsS https://kb.example.com/.well-known/oauth-authorization-server | jq .is
 
 The same works with a dashboard-managed tunnel (Zero Trust → Networks → Tunnels → Public hostname → `HTTP`, `127.0.0.1:8765`). Cloudflare forwards `X-Forwarded-Proto: https` and the public `Host`, so the OAuth metadata advertises `https://kb.example.com` without further configuration; set `KB_PUBLIC_URL` only if the issuer printed above is wrong. Consider a Cloudflare Access policy or WAF rules on top; the server's own token and OAuth still gate every call.
 
+## Files: PDFs, images, documents
+
+Notes are text, but a vault also holds attachments. Four tools cover them:
+
+| Tool | Use |
+|---|---|
+| `kb_get_file` | Returns the file as an embedded binary resource (PDF, image, …) plus metadata; refuses files over `max_bytes` (default 10 MB). |
+| `kb_file_link` | Returns a temporary signed HTTPS link (`/files/<path>?exp&sig`, 15 min by default) that opens the file in any browser without signing in. Ask for it when you want to view or save an attachment on your phone. |
+| `kb_upload_file` | Stores base64 content at a path and commits it (for scripts and Claude Code, which can read local files). |
+| `kb_upload_link` | Returns a temporary signed page (`/upload/<path>?exp&sig`) where you pick a file on your device; the server commits it and shows the stored path. Use a folder path ending with `/` (e.g. `Inbox/`) to keep the file's own name and upload several at once. |
+
+`kb_move_note` and `kb_delete_note` work on attachments too. With a token you can also use the routes directly:
+
+```bash
+curl -H "Authorization: Bearer $KB_HTTP_TOKEN" -o scan.pdf https://kb.example.com/files/Documents/_attachments/scan.pdf
+curl -H "Authorization: Bearer $KB_HTTP_TOKEN" -H "X-KB-Summary: from scanner" --upload-file scan.pdf https://kb.example.com/files/Inbox/scan.pdf
+```
+
+Links are HMAC-signed with a key stored next to the index, bound to one path and expiry; downloads are served with `nosniff` and a sandboxing CSP. Attachment content is not searchable yet (planned: text extraction).
+
 **Exposing it beyond localhost.** The Compose file publishes the port on `127.0.0.1` only. To reach it from other machines, either put a TLS reverse proxy (Caddy, nginx, Traefik) in front and keep the bind on loopback, join the host to a private network (Tailscale, WireGuard) and set `KB_BIND` to that interface, or set `KB_HTTP_TLS_CERT`/`KB_HTTP_TLS_KEY` and bind `0.0.0.0`. Never publish the plain-HTTP port on a public interface: the token would travel in clear text.
 
 ## Several instances at once

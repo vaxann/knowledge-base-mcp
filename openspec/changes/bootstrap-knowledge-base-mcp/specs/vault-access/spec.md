@@ -63,15 +63,15 @@ A note is a UTF-8 Markdown file whose name ends in `.md`. The server SHALL parse
 - **WHEN** a note's frontmatter is not valid YAML
 - **THEN** the note is still returned with `frontmatter_error` set and an empty frontmatter map, and the raw content is intact
 
-### Requirement: Non-Markdown files are listed but not edited
-Files that are not Markdown notes (attachments such as PDF or images) SHALL appear in listings with name, size and media type, but write tools MUST reject them with code `unsupported_file`, and read tools MUST NOT return their bytes as text.
+### Requirement: Non-Markdown files are listed but never edited as text
+Files that are not Markdown notes (attachments such as PDF or images) SHALL appear in listings with name, size and media type. Text tools (`kb_create_note`, `kb_replace_note`, `kb_patch_note`, `kb_get_note`) MUST reject them with code `unsupported_file` or `not_found`; their bytes are handled only by the attachment tools (see the `attachments` capability).
 
 #### Scenario: Listing a folder with attachments
 - **WHEN** a client lists a folder containing `note.md` and `scan.pdf`
 - **THEN** both entries are returned, with `scan.pdf` marked as `kind: attachment`
 
-#### Scenario: Attempt to edit an attachment
-- **WHEN** a client calls a write tool on `scan.pdf`
+#### Scenario: Attempt to edit an attachment as text
+- **WHEN** a client calls `kb_create_note` or `kb_patch_note` on `scan.pdf`
 - **THEN** the call fails with code `unsupported_file`
 
 ### Requirement: Credentials never live in tracked files or logs
