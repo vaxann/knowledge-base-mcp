@@ -110,8 +110,14 @@ func (s *Server) Handler(token string) http.Handler {
 
 // HandlerWith builds the handler from full options.
 func (s *Server) HandlerWith(o HTTPOptions) http.Handler {
+	// A base64 upload inflates a file by a third and travels inside one
+	// JSON-RPC request, so the transport body limit must follow KB_MAX_UPLOAD.
+	bodyLimit := s.maxUpload/3*4 + (1 << 20)
+	if bodyLimit < mcp.DefaultMaxRequestBodyBytes {
+		bodyLimit = mcp.DefaultMaxRequestBodyBytes
+	}
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s.mcp },
-		&mcp.StreamableHTTPOptions{Logger: s.log, DisableLocalhostProtection: o.Token != "" || o.OAuth != nil})
+		&mcp.StreamableHTTPOptions{Logger: s.log, DisableLocalhostProtection: o.Token != "" || o.OAuth != nil, MaxRequestBodyBytes: bodyLimit})
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

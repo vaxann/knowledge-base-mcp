@@ -194,6 +194,29 @@ func TestHTTPFileEndpoints(t *testing.T) {
 	}
 }
 
+func TestLargeBase64UploadOverHTTP(t *testing.T) {
+	ts, vaultDir := newHTTPServer(t, "s3cret")
+	sess := connectOK(t, ts, "s3cret")
+	data := make([]byte, 6<<20) // above the SDK's 4 MiB default body limit once base64-encoded
+	copy(data, "%PDF-1.4\n")
+	for i := 16; i < len(data); i++ {
+		data[i] = byte(i * 7)
+	}
+	res, err := sess.CallTool(context.Background(), &mcp.CallToolParams{Name: "kb_upload_file", Arguments: map[string]any{"path": "Files/big.pdf", "content_base64": base64.StdEncoding.EncodeToString(data)}})
+	if err != nil || res.IsError {
+		t.Fatalf("6 MB base64 upload must succeed: %v %+v", err, res)
+	}
+	got, err := os.ReadFile(filepath.Join(vaultDir, "Files", "big.pdf"))
+	if err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("stored bytes differ: %v", err)
+	}
+	// Above KB_MAX_UPLOAD (50 MB default is too big for a unit test): the tool reports too_large cleanly.
+	res, err = sess.CallTool(context.Background(), &mcp.CallToolParams{Name: "kb_get_file", Arguments: map[string]any{"path": "Files/big.pdf", "max_bytes": 1 << 20}})
+	if err != nil || !res.IsError {
+		t.Fatalf("expected too_large tool error, got %v %+v", err, res)
+	}
+}
+
 func connectOK(t *testing.T, ts *httptest.Server, token string) *mcp.ClientSession {
 	t.Helper()
 	sess, err := connect(t, ts, token)

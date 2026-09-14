@@ -12,7 +12,6 @@ services:
     image: knowledge-base-mcp:local
     container_name: knowledge-base-mcp
     restart: unless-stopped
-    init: true
     environment:
       KB_GIT_REMOTE: ${KB_GIT_REMOTE:?set KB_GIT_REMOTE in .env}
       KB_GIT_BRANCH: ${KB_GIT_BRANCH:-main}
