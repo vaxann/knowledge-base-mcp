@@ -32,7 +32,7 @@ MCP client (Claude, Cursor, custom agent)
    private clone of your vault  ⇄  Git remote  ⇄  your editor's clone
 ```
 
-## Quick start
+## Quick start (binary, stdio)
 
 ```bash
 go install github.com/vaxann/knowledge-base-mcp/cmd/knowledge-base-mcp@latest
@@ -41,7 +41,121 @@ export KB_GIT_REMOTE=git@github.com:me/my-notes.git    # your vault repository
 knowledge-base-mcp -check                              # validates config, clones, builds the index
 ```
 
-Then register `knowledge-base-mcp` as an MCP command in your client, or run a permanent instance with `docker compose up -d` (HTTP on `127.0.0.1:8765`, endpoint `/mcp`) and connect with the token, or through a Cloudflare Tunnel with OAuth sign-in from the Claude apps. See [docs/clients.md](docs/clients.md) for Claude Desktop, Claude Code, Cursor, container, Compose, Claude app and Cloudflare setups.
+Then register `knowledge-base-mcp` as an MCP command in your client (Claude Desktop, Claude Code, Cursor). See [docs/clients.md](docs/clients.md).
+
+## Running in Docker (always-on server)
+
+This is the recommended setup for a home server or VPS: one container that keeps a private clone of the vault in sync with GitHub, serves MCP over HTTP with a token, and lets the Claude and ChatGPT apps sign in through OAuth. The port stays on localhost; a tunnel or reverse proxy on the host exposes it over HTTPS.
+
+```
+Claude Code / scripts ──── Bearer token ────┐
+Claude app / ChatGPT ───── OAuth sign-in ───┤
+                                            ▼
+   https://kb.example.com  (Cloudflare Tunnel or reverse proxy on the host)
+                                            │ http://127.0.0.1:8765
+                                    ┌───────┴────────┐
+                                    │ knowledge-base │  docker compose service "kb"
+                                    │ -mcp container │  volumes: kb-vault, kb-index
+                                    └───────┬────────┘
+                                            │ SSH deploy key (or HTTPS token)
+                                     git@github.com:me/my-notes.git
+```
+
+### 1. Prerequisites
+
+- Docker with Compose v2, `git`, `ssh-keygen`, `openssl`.
+- A GitHub repository with your Markdown vault (`main` branch).
+- A domain in Cloudflare (optional, only for the mobile apps / remote access).
+
+### 2. Create a deploy key with write access
+
+The container needs its own Git identity. A deploy key is limited to one repository and can be revoked without touching your personal keys.
+
+```bash
+mkdir -p ~/.config/knowledge-base-mcp && chmod 700 ~/.config/knowledge-base-mcp
+ssh-keygen -t ed25519 -N "" -C "knowledge-base-mcp" -f ~/.config/knowledge-base-mcp/deploy_key
+gh repo deploy-key add ~/.config/knowledge-base-mcp/deploy_key.pub --repo me/my-notes --allow-write --title "knowledge-base-mcp"
+# or paste deploy_key.pub in GitHub → repository → Settings → Deploy keys, tick "Allow write access"
+```
+
+Alternative: an HTTPS fine-grained token with *Contents: read and write* in `KB_GIT_TOKEN` and an `https://` remote.
+
+### 3. Configure
+
+```bash
+git clone https://github.com/vaxann/knowledge-base-mcp.git && cd knowledge-base-mcp
+cp .env.example .env
+openssl rand -hex 32     > ~/.config/knowledge-base-mcp/http_token       # for Claude Code / scripts
+openssl rand -base64 18  > ~/.config/knowledge-base-mcp/oauth_password   # typed on the sign-in page
+```
+
+Edit `.env` (git-ignored, never commit it):
+
+```dotenv
+KB_GIT_REMOTE=git@github.com:me/my-notes.git
+KB_GIT_BRANCH=main
+KB_SSH_KEY_FILE=/home/me/.config/knowledge-base-mcp/deploy_key
+KB_HTTP_TOKEN=<contents of http_token>
+KB_OAUTH_PASSWORD=<contents of oauth_password>
+KB_PUBLIC_URL=https://kb.example.com     # set once the tunnel/proxy is up; optional
+KB_BIND=127.0.0.1
+KB_PORT=8765
+KB_INSTANCE_ID=home-server
+```
+
+### 4. Start
+
+```bash
+docker compose up -d --build     # first start clones the vault and builds the index (a minute for ~1k notes)
+docker compose logs -f kb        # wait for "serving MCP over HTTP"
+curl -fsS http://127.0.0.1:8765/healthz
+```
+
+What you get on `127.0.0.1:8765`:
+
+| Path | Purpose |
+|---|---|
+| `/mcp` | MCP endpoint (streamable HTTP); needs `Authorization: Bearer <KB_HTTP_TOKEN>` or an OAuth access token |
+| `/healthz` | liveness, no auth |
+| `/.well-known/oauth-*`, `/oauth/*` | OAuth metadata, client registration, sign-in page, token endpoint |
+| `/files/<path>`, `/upload/<path>` | attachment download / upload (token or signed link) |
+
+The container runs as an unprivileged user, holds the clone and the index in the named volumes `kb-vault` and `kb-index`, pulls from GitHub every 60 s and before every write, and pushes each commit.
+
+### 5. Connect clients
+
+Claude Code on the same host:
+
+```bash
+claude mcp add --scope user --transport http kb http://127.0.0.1:8765/mcp \
+  --header "Authorization: Bearer $(cat ~/.config/knowledge-base-mcp/http_token)"
+```
+
+Claude app (iOS/Android/web) and ChatGPT need the server on HTTPS. With Cloudflare Tunnel running on the host, add a public hostname `kb.example.com` → `HTTP` `127.0.0.1:8765`, then check:
+
+```bash
+curl -fsS https://kb.example.com/healthz
+curl -fsS https://kb.example.com/.well-known/oauth-authorization-server | jq .issuer   # https://kb.example.com
+```
+
+- Claude app: *Add custom connector* → URL `https://kb.example.com/mcp`, *Requires sign-in* on, Client ID/secret empty → enter `KB_OAUTH_PASSWORD` on the sign-in page.
+- ChatGPT (web, developer mode): Apps → create → URL `https://kb.example.com/mcp`, authentication OAuth, no client credentials.
+
+Details, alternatives (reverse proxy, direct TLS) and the file tools are in [docs/clients.md](docs/clients.md).
+
+### 6. Day-to-day operations
+
+```bash
+docker compose logs -f kb                              # logs (paths and tool names only, never note content)
+docker compose build --pull && docker compose up -d    # update after git pull
+docker compose down                                    # stop; volumes and tokens survive
+docker compose down -v                                 # wipe clone, index, OAuth state (re-clones on next start)
+```
+
+- Rotate the token or password: edit `.env`, `docker compose up -d`, reconnect clients.
+- Revoke all app sign-ins: `docker compose exec kb rm /data/index/oauth-state.json && docker compose restart kb`.
+- Merge conflicts are never resolved by the server: `kb_sync_status` shows `conflict`, and the next client to write is asked to resolve it (see [docs/conflicts.md](docs/conflicts.md)).
+- Uploads are limited to `KB_MAX_UPLOAD` (50 MB); Cloudflare's free plan caps request bodies at 100 MB.
 
 ## Tools
 
