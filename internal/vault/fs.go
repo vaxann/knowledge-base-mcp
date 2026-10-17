@@ -50,7 +50,7 @@ func (v *Vault) Check(rel string) (clean, abs string, err error) {
 		return "", "", err
 	}
 	if v.excl.Excluded(clean) {
-		return clean, "", fmt.Errorf("%w: %s", ErrNotFound, clean)
+		return clean, "", notFound(clean, "")
 	}
 	abs, err = Resolve(v.Root, clean)
 	if err != nil {
@@ -71,12 +71,12 @@ func (v *Vault) Read(rel string) ([]byte, os.FileInfo, error) {
 	st, err := os.Stat(abs)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil, fmt.Errorf("%w: %s", ErrNotFound, rel)
+			return nil, nil, notFound(rel, "")
 		}
 		return nil, nil, err
 	}
 	if st.IsDir() {
-		return nil, nil, fmt.Errorf("%w: %s is a folder", ErrNotFound, rel)
+		return nil, nil, notFound(rel, " is a folder")
 	}
 	data, err := os.ReadFile(abs)
 	return data, st, err
@@ -89,7 +89,7 @@ func (v *Vault) ReadNote(rel string) (*Note, error) {
 		return nil, err
 	}
 	if !IsMarkdown(clean) {
-		return nil, fmt.Errorf("%w: %s is not a Markdown note", ErrNotFound, clean)
+		return nil, notFound(clean, " is not a Markdown note")
 	}
 	data, st, err := v.Read(clean)
 	if err != nil {
@@ -108,6 +108,16 @@ func (v *Vault) Exists(rel string) bool {
 	}
 	st, err := os.Stat(abs)
 	return err == nil && !st.IsDir()
+}
+
+// IsDir reports whether a (non-excluded) folder exists.
+func (v *Vault) IsDir(rel string) bool {
+	_, abs, err := v.Check(rel)
+	if err != nil {
+		return false
+	}
+	st, err := os.Stat(abs)
+	return err == nil && st.IsDir()
 }
 
 // WriteAtomic writes data via a temp file and rename, creating parent dirs.
@@ -150,7 +160,7 @@ func (v *Vault) Remove(rel string) error {
 	}
 	if err := os.Remove(abs); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("%w: %s", ErrNotFound, rel)
+			return notFound(rel, "")
 		}
 		return err
 	}
@@ -216,10 +226,10 @@ func (v *Vault) List(folder string, recursive bool) ([]Entry, error) {
 	}
 	st, err := os.Stat(abs)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrNotFound, folder)
+		return nil, notFound(clean, "")
 	}
 	if !st.IsDir() {
-		return nil, fmt.Errorf("%w: %s is not a folder", ErrNotFound, folder)
+		return nil, notFound(clean, " is not a folder")
 	}
 	var out []Entry
 	if recursive {

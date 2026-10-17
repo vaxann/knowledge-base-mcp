@@ -10,7 +10,8 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
     go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o /out/knowledge-base-mcp ./cmd/knowledge-base-mcp
 
 FROM alpine:3.21
-RUN apk add --no-cache git openssh-client ca-certificates tini su-exec \
+# openssh-keygen: SSH keys for repositories added in the admin panel.
+RUN apk add --no-cache git openssh-client openssh-keygen ca-certificates tini su-exec \
     && adduser -D -u 10001 kb \
     && mkdir -p /data/vault /data/index /home/kb/.ssh \
     && chown -R kb:kb /data /home/kb

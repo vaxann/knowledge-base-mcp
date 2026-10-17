@@ -126,6 +126,14 @@ The Claude apps add remote MCP servers as *custom connectors* and only support O
 
 Tokens and registered clients are stored hashed in `oauth-state.json` on the index volume; to revoke everything, delete that file and restart. Every wrong password costs one second, and all MCP calls made by the app carry the connector's `KB-Client` name in commit trailers.
 
+### On a multi-user server
+
+When the server runs in [multi-user mode](multi-user.md) (`KB_ADMIN_EMAIL` is set), step 3 is different: the sign-in page asks for the person's **email address** and then for the **6-digit code** sent to it. There is no password, and `KB_OAUTH_PASSWORD` is ignored. The app then acts as that person's account and sees only the folders the administrator granted to it. Paths start with a repository alias (`notes/Projects/plan.md`); `kb_list` with an empty folder shows the repositories available.
+
+- Only addresses the administrator added at `/admin` can sign in. The page looks the same for any address, so a mistyped one simply never receives a code.
+- Sessions are ended per account in the admin panel (*End sessions*, or by disabling the account), not by deleting a file. Registered clients and token hashes live in `state.json` in the data directory.
+- A static token still works for clients that cannot do OAuth, but there is only one: `KB_HTTP_TOKEN` acts as the administrator account and sees what that account's rules allow. There are no personal tokens for other accounts.
+
 ### Ports and paths
 
 | What | Where |
@@ -135,6 +143,7 @@ Tokens and registered clients are stored hashed in `oauth-state.json` on the ind
 | MCP endpoint | `/mcp` (streamable HTTP; bearer token or OAuth access token) |
 | Health check | `/healthz` (no auth) |
 | OAuth | `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource`, `/oauth/register`, `/oauth/authorize`, `/oauth/token` |
+| Admin panel | `/admin` (multi-user mode only; administrator sign-in by email code) |
 
 Everything the tunnel or proxy needs to forward is the single origin `http://127.0.0.1:8765`; all paths above live on it.
 

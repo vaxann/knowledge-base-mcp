@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,6 +22,8 @@ type SyncStatus struct {
 	LastPush  time.Time `json:"last_push,omitempty"`
 	LastError string    `json:"last_error,omitempty"`
 	Conflicts []string  `json:"conflicts"`
+	// HiddenConflicts counts conflicted paths the caller may not see.
+	HiddenConflicts int `json:"hidden_conflicts,omitempty"`
 }
 
 // pull fetches and merges the remote branch. It must be called with s.mu
@@ -197,10 +200,30 @@ func (s *Service) Status(ctx context.Context) (SyncStatus, error) {
 		st.State = "conflict"
 		un, _ := s.repo.UnmergedFiles(ctx)
 		for _, u := range un {
-			st.Conflicts = append(st.Conflicts, u.Path)
+			if !s.canRead(ctx, u.Path) {
+				st.HiddenConflicts++
+				continue
+			}
+			st.Conflicts = append(st.Conflicts, s.out(u.Path))
 		}
 	}
 	return st, nil
+}
+
+// Unpushed returns the number of local commits the remote does not have.
+func (s *Service) Unpushed(ctx context.Context) (int, error) {
+	if s.remote == "" {
+		return 0, nil
+	}
+	ahead, _, err := s.repo.AheadBehind(ctx, s.remote, s.cfg.Git.Branch)
+	return ahead, err
+}
+
+// PushNow sends local commits to the remote immediately.
+func (s *Service) PushNow(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.push(ctx)
 }
 
 // SyncNow pulls and pushes immediately.
@@ -242,6 +265,8 @@ type Conflict struct {
 type ConflictReport struct {
 	Conflicts     []Conflict       `json:"conflicts"`
 	RemoteCommits []gitrepo.Commit `json:"remote_commits,omitempty"`
+	// Hidden counts conflicted paths the caller may not see.
+	Hidden int `json:"hidden,omitempty"`
 }
 
 // Conflicts lists the frozen merge, if any.
@@ -259,7 +284,11 @@ func (s *Service) conflictReport(ctx context.Context) (ConflictReport, error) {
 	}
 	rep := ConflictReport{Conflicts: []Conflict{}}
 	for _, u := range un {
-		c := Conflict{Path: u.Path, Kind: u.Kind()}
+		if !s.canRead(ctx, u.Path) {
+			rep.Hidden++
+			continue
+		}
+		c := Conflict{Path: s.out(u.Path), Kind: u.Kind()}
 		if data, _, err := s.v.Read(u.Path); err == nil {
 			str := string(data)
 			c.Content = &str
@@ -273,7 +302,15 @@ func (s *Service) conflictReport(ctx context.Context) (ConflictReport, error) {
 		rep.Conflicts = append(rep.Conflicts, c)
 	}
 	if commits, err := s.repo.Log(ctx, gitrepo.LogOptions{Rev: "HEAD..MERGE_HEAD", Limit: 50}); err == nil {
-		rep.RemoteCommits = commits
+		for i := range commits {
+			c := commits[i]
+			if s.visible(ctx) == nil {
+				s.outChanges(&c)
+				rep.RemoteCommits = append(rep.RemoteCommits, c)
+			} else if s.redactCommit(ctx, &c, c.Changes) {
+				rep.RemoteCommits = append(rep.RemoteCommits, c)
+			}
+		}
 	}
 	return rep, nil
 }
@@ -283,6 +320,9 @@ func (s *Service) mergeConflictError(ctx context.Context) *Error {
 	e := E(CodeMergeConflict, "a merge with the remote has conflicts; resolve them with kb_resolve_conflict before writing")
 	if err == nil {
 		e = e.With("conflicts", rep.Conflicts).With("remote_commits", rep.RemoteCommits)
+		if rep.Hidden > 0 {
+			e = e.With("hidden", rep.Hidden)
+		}
 	}
 	return e
 }
@@ -326,17 +366,30 @@ func (s *Service) ResolveConflict(ctx context.Context, summary string, res []Res
 	}
 	un, err := s.repo.UnmergedFiles(ctx)
 	if err != nil {
-		return ResolveResult{}, wrap(err)
+		return ResolveResult{}, s.wrap(err)
 	}
 	unmerged := map[string]gitrepo.Unmerged{}
 	for _, u := range un {
 		unmerged[u.Path] = u
 	}
+	// A merge is completed as a whole, so the caller must be allowed to
+	// change every conflicted path, including the ones it cannot see.
+	for _, u := range un {
+		if !s.canWrite(ctx, u.Path) {
+			return ResolveResult{}, E(CodeForbidden, "this merge conflicts on paths this account may not change; an account with access to all of them must resolve it")
+		}
+	}
 	// Validate everything before touching anything.
-	for _, r := range res {
+	for i := range res {
+		rel, err := s.in(res[i].Path)
+		if err != nil {
+			return ResolveResult{}, s.wrap(err)
+		}
+		res[i].Path = rel
+		r := res[i]
 		u, ok := unmerged[r.Path]
 		if !ok {
-			return ResolveResult{}, E(CodeNotFound, "%s is not a conflicted path", r.Path).With("remaining", keys(unmerged))
+			return ResolveResult{}, E(CodeNotFound, "%s is not a conflicted path", s.out(r.Path)).With("remaining", s.keys(unmerged))
 		}
 		switch {
 		case r.Delete:
@@ -344,13 +397,13 @@ func (s *Service) ResolveConflict(ctx context.Context, summary string, res []Res
 			// A side that deleted the file can still be taken: it means deleting.
 			_ = u
 		case r.Take != "":
-			return ResolveResult{}, E(CodeInvalidArgument, "take must be 'ours' or 'theirs' for %s", r.Path)
+			return ResolveResult{}, E(CodeInvalidArgument, "take must be 'ours' or 'theirs' for %s", s.out(r.Path))
 		case r.Content != "":
 			if HasConflictMarkers(r.Content) {
-				return ResolveResult{}, E(CodeMarkersPresent, "resolution for %s still contains conflict markers", r.Path)
+				return ResolveResult{}, E(CodeMarkersPresent, "resolution for %s still contains conflict markers", s.out(r.Path))
 			}
 		default:
-			return ResolveResult{}, E(CodeInvalidArgument, "resolution for %s needs content, take or delete", r.Path)
+			return ResolveResult{}, E(CodeInvalidArgument, "resolution for %s needs content, take or delete", s.out(r.Path))
 		}
 	}
 	out := ResolveResult{Resolved: []string{}, Remaining: []string{}}
@@ -359,27 +412,27 @@ func (s *Service) ResolveConflict(ctx context.Context, summary string, res []Res
 		switch {
 		case r.Delete, (r.Take == "ours" && !u.Ours), (r.Take == "theirs" && !u.Theirs):
 			if err := s.repo.RemoveFromIndexAndTree(ctx, r.Path); err != nil {
-				return out, wrap(err)
+				return out, s.wrap(err)
 			}
 		case r.Take != "":
 			if err := s.repo.CheckoutSide(ctx, r.Take, r.Path); err != nil {
-				return out, wrap(err)
+				return out, s.wrap(err)
 			}
 			if err := s.repo.Stage(ctx, r.Path); err != nil {
-				return out, wrap(err)
+				return out, s.wrap(err)
 			}
 		default:
 			if err := s.v.WriteAtomic(r.Path, []byte(r.Content)); err != nil {
-				return out, wrap(err)
+				return out, s.wrap(err)
 			}
 			if err := s.repo.Stage(ctx, r.Path); err != nil {
-				return out, wrap(err)
+				return out, s.wrap(err)
 			}
 		}
-		out.Resolved = append(out.Resolved, r.Path)
+		out.Resolved = append(out.Resolved, s.out(r.Path))
 		delete(unmerged, r.Path)
 	}
-	out.Remaining = keys(unmerged)
+	out.Remaining = s.keys(unmerged)
 	if len(out.Remaining) > 0 {
 		return out, nil
 	}
@@ -391,12 +444,12 @@ func (s *Service) ResolveConflict(ctx context.Context, summary string, res []Res
 	msg := s.commitMessage(ctx, fmt.Sprintf("merge: %s/%s (resolved: %s)", s.remote, s.cfg.Git.Branch, strings.Join(paths, ", ")), summary)
 	hash, err := s.repo.Commit(ctx, msg)
 	if err != nil {
-		return out, wrap(err)
+		return out, s.wrap(err)
 	}
 	out.Commit, out.Complete = hash, true
 	changes, _ := s.repo.DiffNameStatus(ctx, oldHead, hash)
 	if err := s.applyChanges(ctx, changes); err != nil {
-		return out, wrap(err)
+		return out, s.wrap(err)
 	}
 	s.stateMu.Lock()
 	s.lastPull = time.Now()
@@ -406,10 +459,11 @@ func (s *Service) ResolveConflict(ctx context.Context, summary string, res []Res
 	return out, nil
 }
 
-func keys(m map[string]gitrepo.Unmerged) []string {
+func (s *Service) keys(m map[string]gitrepo.Unmerged) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
-		out = append(out, k)
+		out = append(out, s.out(k))
 	}
+	sort.Strings(out)
 	return out
 }

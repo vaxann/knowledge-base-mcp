@@ -1,0 +1,216 @@
+/* Admin panel of knowledge-base-mcp. One stylesheet, no web fonts, no
+   scripts required. Colours carry meaning: pine is write, amber is read,
+   brick is no access (and errors). */
+:root {
+  --paper: #f3f5f4;
+  --surface: #ffffff;
+  --ink: #16202a;
+  --dim: #55636b;
+  --line: #c9d1d0;
+  --pine: #1f6f5c;
+  --amber: #96640f;
+  --brick: #a23b3b;
+  --pine-wash: #dcefe9;
+  --amber-wash: #f6ead0;
+  --brick-wash: #f5dede;
+  --focus: #1b5fd1;
+  --sans: system-ui, "Segoe UI", "Helvetica Neue", "Noto Sans", sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #12181c;
+    --surface: #1a2228;
+    --ink: #e4eae8;
+    --dim: #9aa8ad;
+    --line: #34424a;
+    --pine: #5fc2a8;
+    --amber: #e3b65c;
+    --brick: #ea8a8a;
+    --pine-wash: #173a33;
+    --amber-wash: #3d3115;
+    --brick-wash: #442222;
+    --focus: #8ab4ff;
+  }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 1rem/1.5 var(--sans);
+}
+a { color: inherit; text-decoration-color: var(--line); text-underline-offset: 0.18em; }
+a:hover { text-decoration-color: currentColor; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.mono { font-family: var(--mono); font-size: 0.94em; }
+.wrap { overflow-wrap: anywhere; }
+.dim { color: var(--dim); }
+
+/* ---- frame ---- */
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 1.5rem;
+  padding: 0.9rem clamp(1rem, 4vw, 2.5rem);
+  border-bottom: 1px solid var(--line);
+}
+.brand { font-weight: 650; text-decoration: none; letter-spacing: 0.01em; }
+.top nav { display: flex; gap: 1.25rem; }
+.top nav a { text-decoration: none; color: var(--dim); padding-bottom: 0.15rem; border-bottom: 2px solid transparent; }
+.top nav a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--pine); }
+.who { margin-left: auto; display: flex; align-items: baseline; gap: 0.75rem; color: var(--dim); font-size: 0.9rem; }
+main { max-width: 62rem; padding: 2rem clamp(1rem, 4vw, 2.5rem) 5rem; }
+
+h1 { font-size: 1.75rem; line-height: 1.2; margin: 0 0 0.5rem; font-weight: 650; }
+h2 { font-size: 1.1rem; margin: 2.75rem 0 0.6rem; font-weight: 650; }
+/* A page about a folder or an address is titled with that string itself. */
+h1.path { font-family: var(--mono); font-size: clamp(1.25rem, 4.2vw, 1.75rem); font-weight: 600; overflow-wrap: anywhere; }
+h1.path a { text-decoration: none; }
+h1.path a:hover { text-decoration: underline; }
+h1.path .sep { color: var(--dim); padding: 0 0.12em; }
+.lede { max-width: 68ch; color: var(--dim); margin: 0 0 1.5rem; }
+.back { margin: 0 0 0.75rem; font-size: 0.9rem; }
+.back a::before { content: "‹ "; }
+.empty { max-width: 60ch; padding: 1rem 1.1rem; border: 1px dashed var(--line); border-radius: 4px; }
+.hint { color: var(--dim); font-size: 0.9rem; margin: 0.3rem 0 0; max-width: 64ch; }
+
+.flash { margin: 0 0 1.5rem; padding: 0.7rem 1rem; border-left: 4px solid var(--pine); background: var(--pine-wash); max-width: 70ch; overflow-wrap: anywhere; }
+.flash.bad { border-left-color: var(--brick); background: var(--brick-wash); }
+.error { color: var(--brick); margin: 0.5rem 0 0; }
+
+/* ---- forms ---- */
+label { display: block; font-weight: 550; margin: 1rem 0 0.3rem; }
+input[type="text"], input[type="email"], input[type="password"], textarea {
+  width: 100%;
+  max-width: 34rem;
+  padding: 0.55rem 0.65rem;
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+textarea { max-width: 44rem; resize: vertical; }
+input.mono, textarea.mono { font-family: var(--mono); font-size: 0.92rem; }
+textarea.key { background: transparent; }
+button, .button {
+  display: inline-block;
+  font: inherit;
+  font-weight: 550;
+  padding: 0.5rem 0.95rem;
+  color: var(--paper);
+  background: var(--ink);
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  cursor: pointer;
+  text-decoration: none;
+}
+button:hover, .button:hover { opacity: 0.88; }
+button.quiet, .button.quiet { color: var(--ink); background: transparent; border-color: var(--line); font-weight: 450; }
+button.danger { background: var(--brick); border-color: var(--brick); color: var(--surface); }
+form.stack > button, .signin form > button { margin-top: 1.25rem; }
+form.inline { display: grid; grid-template-columns: minmax(0, 24rem) auto; gap: 0 0.75rem; align-items: end; justify-content: start; }
+form.inline label { grid-column: 1 / -1; }
+.row { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 1.5rem 0 0; }
+fieldset.credential { border: 0; padding: 0; margin: 1.25rem 0 0; min-width: 0; }
+fieldset.credential legend { font-weight: 550; padding: 0; }
+.choice { font-weight: 450; margin: 0.7rem 0 0; }
+.choice input { margin-right: 0.45rem; }
+.sub { margin: 0 0 0 1.55rem; }
+.sub label { margin-top: 0.5rem; font-weight: 450; font-size: 0.92rem; }
+details { margin-top: 1.5rem; }
+summary { cursor: pointer; color: var(--dim); }
+
+/* ---- sign-in ---- */
+.signin { max-width: 26rem; margin: 8vh 0 0; }
+input.code { font-family: var(--mono); font-size: 1.6rem; letter-spacing: 0.35em; max-width: 14rem; }
+.signin form + form { margin-top: 0.75rem; }
+
+/* ---- tables that fold into rows on a phone ---- */
+table.list { width: 100%; border-collapse: collapse; }
+table.list th { text-align: left; font-weight: 550; font-size: 0.85rem; color: var(--dim); padding: 0 1rem 0.45rem 0; border-bottom: 1px solid var(--line); }
+table.list td { padding: 0.7rem 1rem 0.7rem 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.list td:last-child, table.list th:last-child { padding-right: 0; }
+.actions { text-align: right; white-space: nowrap; }
+.actions form, .actions details { display: inline-block; margin: 0 0 0 0.35rem; vertical-align: top; }
+.actions button.quiet, .actions summary { padding: 0.25rem 0.6rem; font-size: 0.9rem; }
+.actions summary { display: inline-block; border: 1px solid var(--line); border-radius: 4px; color: var(--brick); list-style: none; }
+.actions summary::-webkit-details-marker { display: none; }
+details.confirm[open] { display: block; text-align: left; white-space: normal; margin-top: 0.6rem; }
+details.confirm p { margin: 0.5rem 0; max-width: 28ch; font-size: 0.9rem; }
+
+.tag { font-size: 0.78rem; padding: 0.08rem 0.45rem; border: 1px solid var(--line); border-radius: 999px; color: var(--dim); white-space: nowrap; }
+.tag.bad { color: var(--brick); border-color: var(--brick); }
+.state { white-space: nowrap; }
+.state::before { content: ""; display: inline-block; width: 0.55em; height: 0.55em; border-radius: 50%; margin-right: 0.45em; background: var(--amber); }
+.state.ok::before, .state.s-ok::before { background: var(--pine); }
+.state.bad::before, .state.s-error::before, .state.s-conflict::before, .state.s-credential_invalid::before { background: var(--brick); }
+.reason { display: block; color: var(--dim); font-size: 0.88rem; max-width: 46ch; overflow-wrap: anywhere; }
+
+dl.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.45rem 1.5rem; margin: 1.25rem 0 0; }
+dl.facts dt { color: var(--dim); }
+dl.facts dd { margin: 0; }
+
+ul.folders { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem 0.6rem; }
+ul.folders li { display: flex; align-items: baseline; gap: 0.5rem; padding: 0.3rem 0.65rem; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+ul.folders a { text-decoration: none; }
+ul.folders a::after { content: "/"; color: var(--dim); }
+.mark { font-size: 0.78rem; color: var(--pine); }
+.mark::before { content: ""; display: inline-block; width: 0.5em; height: 0.5em; border-radius: 50%; background: var(--pine); margin-right: 0.35em; }
+
+/* ---- the level control: one press sets a rule ----
+   on    = a rule set on this very folder (filled)
+   ghost = the level inherited from a folder above (dashed) */
+.level { font-family: var(--mono); font-size: 0.9rem; font-weight: 600; }
+.level.write { color: var(--pine); }
+.level.read { color: var(--amber); }
+.level.none { color: var(--brick); }
+.level + .dim { display: block; font-size: 0.85rem; }
+form.levels { display: inline-flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; background: var(--surface); }
+.lv {
+  font-family: var(--mono);
+  font-size: 0.88rem;
+  font-weight: 500;
+  padding: 0.4rem 0.75rem;
+  color: var(--dim);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  border-left: 1px solid var(--line);
+}
+.lv:first-child { border-left: 0; }
+.lv:hover { opacity: 1; color: var(--ink); background: var(--paper); }
+.lv.on { color: var(--ink); font-weight: 700; background: var(--line); }
+.lv.none.on { color: var(--brick); background: var(--brick-wash); }
+.lv.read.on { color: var(--amber); background: var(--amber-wash); }
+.lv.write.on { color: var(--pine); background: var(--pine-wash); }
+.lv.ghost { outline: 2px dashed currentColor; outline-offset: -5px; }
+.lv.none.ghost { color: var(--brick); }
+.lv.read.ghost { color: var(--amber); }
+.lv.write.ghost { color: var(--pine); }
+.lv:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+
+@media (max-width: 46rem) {
+  .who { margin-left: 0; width: 100%; }
+  table.list thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.list, table.list tbody, table.list tr, table.list td { display: block; }
+  table.list tr { padding: 0.85rem 0; border-bottom: 1px solid var(--line); }
+  table.list td { border: 0; padding: 0.2rem 0; }
+  table.list td[data-label]::before { content: attr(data-label); display: block; font-size: 0.8rem; color: var(--dim); }
+  .actions { text-align: left; white-space: normal; padding-top: 0.5rem; }
+  .actions form, .actions details { margin: 0.35rem 0.35rem 0 0; }
+  form.inline { grid-template-columns: minmax(0, 1fr); }
+  form.inline button { margin-top: 0.75rem; justify-self: start; }
+  .lv { padding: 0.5rem 0.7rem; }
+  dl.facts { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  dl.facts dt { margin-top: 0.7rem; font-size: 0.85rem; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  button, .button, .lv { transition: opacity 0.12s, background-color 0.12s; }
+}

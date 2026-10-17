@@ -119,6 +119,7 @@ What you get on `127.0.0.1:8765`:
 | `/healthz` | liveness, no auth |
 | `/.well-known/oauth-*`, `/oauth/*` | OAuth metadata, client registration, sign-in page, token endpoint |
 | `/files/<path>`, `/upload/<path>` | attachment download / upload (token or signed link) |
+| `/admin` | admin panel, in [multi-user mode](docs/multi-user.md) only |
 
 The container runs as an unprivileged user, holds the clone and the index in the named volumes `kb-vault` and `kb-index`, pulls from GitHub every 60 s and before every write, and pushes each commit.
 
@@ -157,6 +158,26 @@ docker compose down -v                                 # wipe clone, index, OAut
 - Merge conflicts are never resolved by the server: `kb_sync_status` shows `conflict`, and the next client to write is asked to resolve it (see [docs/conflicts.md](docs/conflicts.md)).
 - Uploads are limited to `KB_MAX_UPLOAD` (50 MB); Cloudflare's free plan caps request bodies at 100 MB.
 
+## Sharing with other people: multi-user mode
+
+One server can serve several people and several repositories, with access granted per folder:
+
+- accounts sign in with a one-time code sent by email (no passwords);
+- each repository is a Git-backed folder of notes with its own clone, index and sync;
+- an account sees only the folders it was granted, read-only or read-write, and everything else does not exist for it;
+- an admin panel at `/admin` manages accounts, repositories and access rules.
+
+It is off by default and switched on by `KB_ADMIN_EMAIL`. You need a [Resend](https://resend.com) API key with sending access, a verified sending domain and a secret key:
+
+```dotenv
+KB_ADMIN_EMAIL=admin@example.com
+KB_RESEND_API_KEY=re_your_sending_only_key
+KB_MAIL_FROM="KB <login@mail.example.com>"
+KB_SECRET_KEY=<output of: openssl rand -base64 32>
+```
+
+After `docker compose up -d` open `https://kb.example.com/admin`. The existing vault becomes the first repository under the alias `main`, so paths gain that prefix (`main/Projects/plan.md`), and connected apps sign in again with the email code. Removing `KB_ADMIN_EMAIL` brings the single-vault server back as it was. Everything else is in [docs/multi-user.md](docs/multi-user.md).
+
 ## Tools
 
 | Group | Tools |
@@ -181,6 +202,7 @@ Resources: `kb://note/<path>` (Markdown), `kb://folder/<path>` (JSON listing) an
 | `KB_HTTP_LISTEN`  | Serve HTTP at `/mcp` instead of stdio, e.g. `0.0.0.0:8765` |
 | `KB_HTTP_TOKEN`   | Bearer token required on `/mcp` (mandatory off-loopback) |
 | `KB_READ_ONLY`    | Disable all write tools                              |
+| `KB_ADMIN_EMAIL`  | Administrator address; switches on [multi-user mode](docs/multi-user.md) |
 
 See [docs/configuration.md](docs/configuration.md) for the full reference and error codes, and [docs/conflicts.md](docs/conflicts.md) for how frozen merges are handed to the client. Real configuration files and credentials are git‑ignored and must never be committed.
 

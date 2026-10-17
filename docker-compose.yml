@@ -13,10 +13,15 @@ services:
     container_name: knowledge-base-mcp
     restart: unless-stopped
     environment:
-      KB_GIT_REMOTE: ${KB_GIT_REMOTE:?set KB_GIT_REMOTE in .env}
+      # Required for the classic single-vault server; optional in multi-user
+      # mode, where repositories can also be added in the admin panel. The
+      # server itself reports what is missing.
+      KB_GIT_REMOTE: ${KB_GIT_REMOTE:-}
       KB_GIT_BRANCH: ${KB_GIT_BRANCH:-main}
       KB_HTTP_LISTEN: 0.0.0.0:8765
-      KB_HTTP_TOKEN: ${KB_HTTP_TOKEN:?set KB_HTTP_TOKEN in .env (openssl rand -hex 32)}
+      # Bearer token (openssl rand -hex 32). Required for the classic server;
+      # in multi-user mode it is the optional recovery token of the administrator.
+      KB_HTTP_TOKEN: ${KB_HTTP_TOKEN:-}
       # Password typed on the OAuth sign-in page (Claude apps). Falls back to KB_HTTP_TOKEN.
       KB_OAUTH_PASSWORD: ${KB_OAUTH_PASSWORD:-}
       # Public base URL when behind a proxy/tunnel, e.g. https://kb.example.com.
@@ -27,6 +32,17 @@ services:
       KB_PULL_INTERVAL: ${KB_PULL_INTERVAL:-60s}
       KB_INSTANCE_ID: ${KB_INSTANCE_ID:-compose}
       KB_READ_ONLY: ${KB_READ_ONLY:-false}
+      # Multi-user mode (docs/multi-user.md): leave KB_ADMIN_EMAIL empty for
+      # the classic server. State and added repositories live on the index
+      # volume (/data/index) unless KB_DATA_DIR says otherwise.
+      KB_ADMIN_EMAIL: ${KB_ADMIN_EMAIL:-}
+      KB_RESEND_API_KEY: ${KB_RESEND_API_KEY:-}
+      KB_MAIL_FROM: ${KB_MAIL_FROM:-}
+      KB_SECRET_KEY: ${KB_SECRET_KEY:-}
+      KB_VAULT_ALIAS: ${KB_VAULT_ALIAS:-main}
+      # known_hosts lines trusted for SSH remotes (default: GitHub for the
+      # mounted key, first-contact pinning for repositories added in the panel).
+      KB_SSH_KNOWN_HOSTS: ${KB_SSH_KNOWN_HOSTS:-}
     ports:
       # Bind to loopback by default; put a TLS reverse proxy (Caddy, nginx,
       # Traefik) or a private network (Tailscale, WireGuard) in front of it

@@ -93,6 +93,99 @@ func TestHTTPValidation(t *testing.T) {
 	}
 }
 
+// testSecretKey is base64 of 32 zero bytes: a placeholder, never a real key.
+const testSecretKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+func multiEnv(over map[string]string) map[string]string {
+	env := map[string]string{
+		"KB_HTTP_LISTEN":    "0.0.0.0:8765",
+		"KB_INDEX_DIR":      "/data/index",
+		"KB_ADMIN_EMAIL":    "admin@example.com",
+		"KB_RESEND_API_KEY": "re_placeholder",
+		"KB_MAIL_FROM":      "KB <login@mail.example.com>",
+		"KB_SECRET_KEY":     testSecretKey,
+	}
+	for k, v := range over {
+		if v == "" {
+			delete(env, k)
+		} else {
+			env[k] = v
+		}
+	}
+	return env
+}
+
+func TestMultiUserMode(t *testing.T) {
+	cases := []struct {
+		name    string
+		env     map[string]string
+		multi   bool
+		wantErr string // substring; empty means the configuration is valid
+	}{
+		{"classic stdio", map[string]string{"KB_VAULT_PATH": "/v"}, false, ""},
+		{"classic http", map[string]string{"KB_VAULT_PATH": "/v", "KB_HTTP_LISTEN": "127.0.0.1:8765"}, false, ""},
+		{"stdio ignores the administrator address", map[string]string{"KB_VAULT_PATH": "/v", "KB_ADMIN_EMAIL": "admin@example.com"}, false, ""},
+		{"stdio with an administrator still needs a vault", map[string]string{"KB_ADMIN_EMAIL": "admin@example.com"}, false, "KB_VAULT_PATH"},
+		{"complete, no vault, no static token", multiEnv(nil), true, ""},
+		{"complete with a vault to import", multiEnv(map[string]string{"KB_VAULT_PATH": "/data/vault"}), true, ""},
+		{"missing mail key", multiEnv(map[string]string{"KB_RESEND_API_KEY": ""}), true, "KB_RESEND_API_KEY"},
+		{"missing sender", multiEnv(map[string]string{"KB_MAIL_FROM": ""}), true, "KB_MAIL_FROM"},
+		{"malformed sender", multiEnv(map[string]string{"KB_MAIL_FROM": "not an address"}), true, "KB_MAIL_FROM"},
+		{"missing secret key", multiEnv(map[string]string{"KB_SECRET_KEY": ""}), true, "KB_SECRET_KEY"},
+		{"short secret key", multiEnv(map[string]string{"KB_SECRET_KEY": "c2hvcnQ="}), true, "KB_SECRET_KEY"}, //nolint:gosec // base64 of "short", a deliberately invalid placeholder
+		{"malformed administrator address", multiEnv(map[string]string{"KB_ADMIN_EMAIL": "Admin <admin@example.com>"}), true, "KB_ADMIN_EMAIL"},
+		{"invalid alias", multiEnv(map[string]string{"KB_VAULT_ALIAS": "My Notes"}), true, "KB_VAULT_ALIAS"},
+		{"relative vault", multiEnv(map[string]string{"KB_VAULT_PATH": "vault"}), true, "absolute"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg, err := Load("", envMap(c.env))
+			if cfg.MultiUser() != c.multi {
+				t.Errorf("MultiUser() = %v, want %v", cfg.MultiUser(), c.multi)
+			}
+			switch {
+			case c.wantErr == "" && err != nil:
+				t.Fatalf("unexpected error: %v", err)
+			case c.wantErr != "" && (err == nil || !strings.Contains(err.Error(), c.wantErr)):
+				t.Fatalf("err = %v, want one naming %q", err, c.wantErr)
+			}
+			if err != nil && strings.Contains(err.Error(), "re_placeholder") {
+				t.Error("an error message must not contain the mail key")
+			}
+		})
+	}
+}
+
+func TestMultiUserDefaults(t *testing.T) {
+	cfg, err := Load("", envMap(multiEnv(nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Vault.Alias != "main" {
+		t.Errorf("default alias = %q", cfg.Vault.Alias)
+	}
+	if cfg.DataDirOrDefault() != "/data/index" {
+		t.Errorf("data dir must default to the index dir, got %q", cfg.DataDirOrDefault())
+	}
+	if len(cfg.SecretKeyBytes()) != 32 {
+		t.Errorf("secret key = %d bytes", len(cfg.SecretKeyBytes()))
+	}
+	cfg, err = Load("", envMap(multiEnv(map[string]string{"KB_DATA_DIR": "/srv/kb", "KB_VAULT_ALIAS": "notes"})))
+	if err != nil || cfg.DataDirOrDefault() != "/srv/kb" || cfg.Vault.Alias != "notes" {
+		t.Errorf("overrides not applied: %q %q %v", cfg.DataDirOrDefault(), cfg.Vault.Alias, err)
+	}
+}
+
+func TestExampleConfigLoads(t *testing.T) {
+	cfg, err := Load(filepath.Join("..", "..", "config.example.yaml"), envMap(nil))
+	if err != nil {
+		t.Fatalf("config.example.yaml must load: %v", err)
+	}
+	if cfg.MultiUser() {
+		t.Error("the example must describe classic mode until an administrator address is set")
+	}
+}
+
 func TestParseSize(t *testing.T) {
 	cases := map[string]int64{"2MB": 2 << 20, "512KB": 512 << 10, "100": 100, "1gb": 1 << 30}
 	for in, want := range cases {

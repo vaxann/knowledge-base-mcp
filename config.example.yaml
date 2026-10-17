@@ -11,6 +11,8 @@ vault:
   remote: ""            # e.g. git@github.com:me/my-notes.git
   # Extra glob patterns to hide from all tools (in addition to built-in defaults).
   exclude: []           # e.g. ["Private/**", "*.log"]
+  # Multi-user mode only: alias under which this vault becomes the first repository.
+  alias: main
 
 git:
   branch: main
@@ -24,6 +26,9 @@ git:
   pull_interval: 60s
   # Skip pull-before-write if a pull succeeded this recently.
   pull_freshness: 5s
+  # Multi-user mode only: known_hosts lines for SSH repositories. Empty = pin
+  # each host key on first contact. Prefer KB_SSH_KNOWN_HOSTS.
+  ssh_known_hosts: ""
   # Merge conflicts are never resolved by the server: writes are blocked until a client
   # submits a resolution through kb_resolve_conflict. There is nothing to configure.
 
@@ -56,3 +61,15 @@ server:
     oauth_password: ""
     public_url: ""
     oauth_state: ""
+  # Multi-user mode: accounts signing in with an emailed code, several
+  # repositories and folder-level access rules, managed at /admin. It is
+  # switched on by admin_email together with http.listen; leave it empty for
+  # the classic single-vault server. See docs/multi-user.md.
+  accounts:
+    admin_email: ""       # e.g. admin@example.com (KB_ADMIN_EMAIL)
+    mail_from: ""         # e.g. "KB <login@mail.example.com>" (KB_MAIL_FROM)
+    # Two secrets are accepted from the environment only, never from this file:
+    #   KB_RESEND_API_KEY  mail provider key with sending access
+    #   KB_SECRET_KEY      openssl rand -base64 32; encrypts repository credentials
+  # Where the state file and repositories added at /admin live (default: index_dir).
+  data_dir: ""

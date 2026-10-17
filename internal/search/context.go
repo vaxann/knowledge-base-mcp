@@ -15,6 +15,8 @@ type ContextRequest struct {
 	Query    string
 	MaxChars int
 	Filters  Filters
+	// Visible, when set, restricts the bundle to notes it accepts.
+	Visible func(path string) bool
 }
 
 // ContextResult is the bundle.
@@ -24,28 +26,36 @@ type ContextResult struct {
 	Chunks  int      `json:"chunks"`
 }
 
-type chunk struct {
-	path    string
-	heading string
-	text    string
-	score   float64
+// Chunk is one heading-delimited section with its relevance.
+type Chunk struct {
+	Path    string
+	Heading string
+	Text    string
+	Score   float64
 }
 
 // BuildContext ranks heading-delimited sections of the best-matching notes
 // and concatenates them within the character budget.
 func BuildContext(ctx context.Context, idx Indexer, v *vault.Vault, req ContextRequest) (ContextResult, error) {
-	if req.MaxChars <= 0 {
-		req.MaxChars = 8000
-	}
-	res, err := idx.Search(ctx, Request{Query: req.Query, Limit: 20, Filters: req.Filters})
+	chunks, err := ContextChunks(ctx, idx, v, req)
 	if err != nil {
 		return ContextResult{}, err
+	}
+	return AssembleContext(chunks, req.MaxChars), nil
+}
+
+// ContextChunks returns the scored sections of the best-matching notes,
+// unordered. Chunks of several vaults can be combined before assembly.
+func ContextChunks(ctx context.Context, idx Indexer, v *vault.Vault, req ContextRequest) ([]Chunk, error) {
+	res, err := idx.Search(ctx, Request{Query: req.Query, Limit: 20, Filters: req.Filters, Visible: req.Visible})
+	if err != nil {
+		return nil, err
 	}
 	qtoks := map[string]bool{}
 	for _, t := range idx.Analyze(req.Query) {
 		qtoks[t] = true
 	}
-	var chunks []chunk
+	var chunks []Chunk
 	for _, h := range res.Hits {
 		n, err := v.ReadNote(h.Path)
 		if err != nil {
@@ -62,28 +72,37 @@ func BuildContext(ctx context.Context, idx Indexer, v *vault.Vault, req ContextR
 					hits++
 				}
 			}
-			chunks = append(chunks, chunk{path: h.Path, heading: sec.Heading.Text, text: text, score: h.Score * (1 + float64(hits))})
+			chunks = append(chunks, Chunk{Path: h.Path, Heading: sec.Heading.Text, Text: text, Score: h.Score * (1 + float64(hits))})
 		}
 	}
-	sort.SliceStable(chunks, func(i, j int) bool { return chunks[i].score > chunks[j].score })
+	return chunks, nil
+}
+
+// AssembleContext orders chunks by score and concatenates them, each under
+// its source path, within the character budget.
+func AssembleContext(chunks []Chunk, maxChars int) ContextResult {
+	if maxChars <= 0 {
+		maxChars = 8000
+	}
+	sort.SliceStable(chunks, func(i, j int) bool { return chunks[i].Score > chunks[j].Score })
 	var b strings.Builder
 	var sources []string
 	seen := map[string]bool{}
 	out := ContextResult{}
 	for _, c := range chunks {
-		header := fmt.Sprintf("## %s", c.path)
-		if c.heading != "" {
-			header += " › " + c.heading
+		header := fmt.Sprintf("## %s", c.Path)
+		if c.Heading != "" {
+			header += " › " + c.Heading
 		}
-		piece := header + "\n" + c.text + "\n\n"
-		if b.Len()+len(piece) > req.MaxChars {
+		piece := header + "\n" + c.Text + "\n\n"
+		if b.Len()+len(piece) > maxChars {
 			if b.Len() == 0 {
 				// Even the best chunk is too big: truncate it with a marker.
-				room := req.MaxChars - len(header) - len("\n[truncated]\n")
+				room := maxChars - len(header) - len("\n[truncated]\n")
 				if room > 0 {
-					b.WriteString(header + "\n" + truncateRunes(c.text, room) + "\n[truncated]\n")
+					b.WriteString(header + "\n" + truncateRunes(c.Text, room) + "\n[truncated]\n")
 					out.Chunks++
-					sources = append(sources, c.path)
+					sources = append(sources, c.Path)
 				}
 				break
 			}
@@ -91,14 +110,14 @@ func BuildContext(ctx context.Context, idx Indexer, v *vault.Vault, req ContextR
 		}
 		b.WriteString(piece)
 		out.Chunks++
-		if !seen[c.path] {
-			seen[c.path] = true
-			sources = append(sources, c.path)
+		if !seen[c.Path] {
+			seen[c.Path] = true
+			sources = append(sources, c.Path)
 		}
 	}
 	out.Text = strings.TrimRight(b.String(), "\n")
 	out.Sources = sources
-	return out, nil
+	return out
 }
 
 func truncateRunes(s string, n int) string {

@@ -50,6 +50,9 @@ type Filters struct {
 
 // Request is a ranked search request.
 type Request struct {
+	// Visible, when set, restricts results to paths it accepts. Hits, totals,
+	// offsets and limits then count accepted notes only.
+	Visible func(path string) bool `json:"-"`
 	Query   string
 	Limit   int
 	Offset  int
@@ -277,6 +280,9 @@ func (b *BleveIndex) Search(ctx context.Context, req Request) (Result, error) {
 		req.Limit = 10
 	}
 	q := b.buildQuery(req)
+	if req.Visible != nil {
+		return b.searchVisible(ctx, q, req)
+	}
 	sr := bleve.NewSearchRequestOptions(q, req.Limit, req.Offset, false)
 	sr.Fields = []string{"path", "title"}
 	sr.Highlight = bleve.NewHighlightWithStyle("html")
@@ -294,6 +300,69 @@ func (b *BleveIndex) Search(ctx context.Context, req Request) (Result, error) {
 		}
 		hit.Snippet = snippetOf(h.Fragments)
 		out.Hits = append(out.Hits, hit)
+	}
+	return out, nil
+}
+
+// searchVisible ranks every match, keeps the visible ones and only then
+// applies offset and limit, so a page is never short because of hidden notes
+// and the total says nothing about them. Snippets are fetched for the page.
+func (b *BleveIndex) searchVisible(ctx context.Context, q query.Query, req Request) (Result, error) {
+	type ranked struct {
+		id    string
+		score float64
+	}
+	const batch = 500
+	var visible []ranked
+	out := Result{}
+	for from := 0; ; from += batch {
+		sr := bleve.NewSearchRequestOptions(q, batch, from, false)
+		res, err := b.idx.SearchInContext(ctx, sr)
+		if err != nil {
+			return Result{}, err
+		}
+		out.TookMs += res.Took.Milliseconds()
+		for _, h := range res.Hits {
+			if req.Visible(h.ID) {
+				visible = append(visible, ranked{h.ID, h.Score})
+			}
+		}
+		if len(res.Hits) < batch {
+			break
+		}
+	}
+	out.Total = uint64(len(visible))
+	if req.Offset >= len(visible) {
+		return out, nil
+	}
+	page := visible[req.Offset:]
+	if len(page) > req.Limit {
+		page = page[:req.Limit]
+	}
+	ids := make([]string, len(page))
+	for i, r := range page {
+		ids[i] = r.id
+	}
+	sr := bleve.NewSearchRequestOptions(bleve.NewConjunctionQuery(q, bleve.NewDocIDQuery(ids)), len(ids), 0, false)
+	sr.Fields = []string{"path", "title"}
+	sr.Highlight = bleve.NewHighlightWithStyle("html")
+	sr.Highlight.AddField("body")
+	sr.Highlight.AddField("title")
+	res, err := b.idx.SearchInContext(ctx, sr)
+	if err != nil {
+		return Result{}, err
+	}
+	detail := make(map[string]Hit, len(res.Hits))
+	for _, h := range res.Hits {
+		hit := Hit{Snippet: snippetOf(h.Fragments)}
+		if t, ok := h.Fields["title"].(string); ok {
+			hit.Title = t
+		}
+		detail[h.ID] = hit
+	}
+	for _, r := range page {
+		d := detail[r.id]
+		out.Hits = append(out.Hits, Hit{Path: r.id, Title: d.Title, Score: r.score, Snippet: d.Snippet})
 	}
 	return out, nil
 }

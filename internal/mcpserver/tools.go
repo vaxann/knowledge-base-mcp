@@ -33,20 +33,20 @@ type tagsIn struct {
 
 func (s *Server) registerReadTools() {
 	ro := toolOpts{readOnly: true, idempotent: true}
-	addTool(s, "kb_get_note", "Read a note: raw content, parsed frontmatter, body, headings, tags, outgoing links (resolved), etag for concurrency control, last commit, and conflict sides when the note is part of a frozen merge.", ro,
-		func(ctx context.Context, in pathIn) (any, error) { return s.svc.GetNote(ctx, in.Path) })
-	addTool(s, "kb_get_section", "Return only the text under a heading (up to the next heading of the same or higher level).", ro,
+	addTool(s, "kb_get_note", s.desc("Read a note: raw content, parsed frontmatter, body, headings, tags, outgoing links (resolved), etag for concurrency control, last commit, and conflict sides when the note is part of a frozen merge."), ro,
+		func(ctx context.Context, in pathIn) (any, error) { return s.ws.GetNote(ctx, in.Path) })
+	addTool(s, "kb_get_section", s.desc("Return only the text under a heading (up to the next heading of the same or higher level)."), ro,
 		func(ctx context.Context, in sectionIn) (any, error) {
-			return s.svc.GetSection(ctx, in.Path, in.Heading)
+			return s.ws.GetSection(ctx, in.Path, in.Heading)
 		})
-	addTool(s, "kb_list", "List notes, attachments and folders under a folder, sorted by path, with cursor pagination and an optional glob.", ro,
+	addTool(s, "kb_list", s.desc("List notes, attachments and folders under a folder, sorted by path, with cursor pagination and an optional glob."), ro,
 		func(ctx context.Context, in listIn) (any, error) {
-			return s.svc.List(ctx, kb.ListRequest{Folder: in.Folder, Recursive: in.Recursive, Glob: in.Glob, Limit: in.Limit, Cursor: in.Cursor})
+			return s.ws.List(ctx, kb.ListRequest{Folder: in.Folder, Recursive: in.Recursive, Glob: in.Glob, Limit: in.Limit, Cursor: in.Cursor})
 		})
-	addTool(s, "kb_backlinks", "List notes that link to the given note (wikilinks and relative Markdown links), with the line context of each link. Accepts a path or a bare note name.", ro,
-		func(ctx context.Context, in pathIn) (any, error) { return s.svc.Backlinks(ctx, in.Path) })
+	addTool(s, "kb_backlinks", s.desc("List notes that link to the given note (wikilinks and relative Markdown links), with the line context of each link. Accepts a path or a bare note name."), ro,
+		func(ctx context.Context, in pathIn) (any, error) { return s.ws.Backlinks(ctx, in.Path) })
 	addTool(s, "kb_tags", "List tags (frontmatter and inline #tags) with the number of notes using each, sorted by count.", ro,
-		func(ctx context.Context, in tagsIn) (any, error) { return s.svc.Tags(ctx, in.Prefix), nil })
+		func(ctx context.Context, in tagsIn) (any, error) { return s.ws.Tags(ctx, in.Prefix), nil })
 }
 
 // ---- search ----
@@ -119,26 +119,26 @@ type quickOpenIn struct {
 
 func (s *Server) registerSearchTools() {
 	ro := toolOpts{readOnly: true, idempotent: true}
-	addTool(s, "kb_search", "Ranked full-text search over titles, bodies, tags and frontmatter with Russian/English stemming, highlighted snippets and filters. Use kb_grep for exact matches.", ro,
+	addTool(s, "kb_search", s.desc("Ranked full-text search over titles, bodies, tags and frontmatter with Russian/English stemming, highlighted snippets and filters. Use kb_grep for exact matches."), ro,
 		func(ctx context.Context, in searchIn) (any, error) {
 			f, err := in.Filters.toFilters()
 			if err != nil {
 				return nil, err
 			}
-			return s.svc.Search(ctx, search.Request{Query: in.Query, Limit: in.Limit, Offset: in.Offset, Filters: f})
+			return s.ws.Search(ctx, search.Request{Query: in.Query, Limit: in.Limit, Offset: in.Offset, Filters: f})
 		})
-	addTool(s, "kb_grep", "Exact line search across notes (literal or RE2 regex), like ripgrep: returns path, line number, line text and optional context, including matches inside code blocks. Ideal for finding every [[link]] to a note.", ro,
+	addTool(s, "kb_grep", s.desc("Exact line search across notes (literal or RE2 regex), like ripgrep: returns path, line number, line text and optional context, including matches inside code blocks. Ideal for finding every [[link]] to a note."), ro,
 		func(ctx context.Context, in grepIn) (any, error) {
 			if err := requireString("pattern", in.Pattern); err != nil {
 				return nil, err
 			}
-			return s.svc.Grep(ctx, search.GrepRequest{Pattern: in.Pattern, Regex: in.Regex, CaseSensitive: in.CaseSensitive, Folder: in.Folder, Glob: in.Glob, ContextLines: in.ContextLines, Limit: in.Limit})
+			return s.ws.Grep(ctx, search.GrepRequest{Pattern: in.Pattern, Regex: in.Regex, CaseSensitive: in.CaseSensitive, Folder: in.Folder, Glob: in.Glob, ContextLines: in.ContextLines, Limit: in.Limit})
 		})
 	addTool(s, "kb_query", "Structured query over frontmatter and note metadata (Dataview-style): filter with a where clause, choose fields, sort and limit.", ro,
 		func(ctx context.Context, in queryIn) (any, error) {
-			return s.svc.Query(ctx, search.QueryRequest{Where: in.Where, Select: in.Select, Sort: in.Sort, Limit: in.Limit})
+			return s.ws.Query(ctx, search.QueryRequest{Where: in.Where, Select: in.Select, Sort: in.Sort, Limit: in.Limit})
 		})
-	addTool(s, "kb_context", "Retrieval bundle: the most relevant note sections for a query, concatenated with their source paths within a character budget, so a question can be answered from one call.", ro,
+	addTool(s, "kb_context", s.desc("Retrieval bundle: the most relevant note sections for a query, concatenated with their source paths within a character budget, so a question can be answered from one call."), ro,
 		func(ctx context.Context, in contextIn) (any, error) {
 			if err := requireString("query", in.Query); err != nil {
 				return nil, err
@@ -147,11 +147,11 @@ func (s *Server) registerSearchTools() {
 			if err != nil {
 				return nil, err
 			}
-			return s.svc.Context(ctx, search.ContextRequest{Query: in.Query, MaxChars: in.MaxChars, Filters: f})
+			return s.ws.Context(ctx, search.ContextRequest{Query: in.Query, MaxChars: in.MaxChars, Filters: f})
 		})
 	addTool(s, "kb_quick_open", "Resolve an approximate note name or path to candidates (prefix, substring and fuzzy matching on titles and paths).", ro,
 		func(ctx context.Context, in quickOpenIn) (any, error) {
-			return s.svc.QuickOpen(ctx, in.Text, in.Limit), nil
+			return s.ws.QuickOpen(ctx, in.Text, in.Limit), nil
 		})
 }
 
@@ -204,33 +204,33 @@ type resolveIn struct {
 
 func (s *Server) registerWriteTools() {
 	w := toolOpts{}
-	addTool(s, "kb_create_note", "Create a Markdown note (one commit). Fails with already_exists unless overwrite is set. No templates: read a template note first if you need one.", w,
+	addTool(s, "kb_create_note", s.desc("Create a Markdown note (one commit). Fails with already_exists unless overwrite is set. No templates: read a template note first if you need one."), w,
 		func(ctx context.Context, in createIn) (any, error) {
-			return s.svc.CreateNote(ctx, in.Path, in.Content, in.Frontmatter, in.Overwrite, in.Summary)
+			return s.ws.CreateNote(ctx, in.Path, in.Content, in.Frontmatter, in.Overwrite, in.Summary)
 		})
-	addTool(s, "kb_replace_note", "Replace the whole content of a note (one commit). Pass the etag to avoid overwriting concurrent edits; a conflict error returns the current content.", toolOpts{idempotent: true},
+	addTool(s, "kb_replace_note", s.desc("Replace the whole content of a note (one commit). Pass the etag to avoid overwriting concurrent edits; a conflict error returns the current content."), toolOpts{idempotent: true},
 		func(ctx context.Context, in replaceIn) (any, error) {
-			return s.svc.ReplaceNote(ctx, in.Path, in.Content, in.ETag, in.Summary)
+			return s.ws.ReplaceNote(ctx, in.Path, in.Content, in.ETag, in.Summary)
 		})
-	addTool(s, "kb_patch_note", "Apply targeted edits atomically (one commit): append/prepend text, replace or insert under a heading, set/remove frontmatter keys, find/replace.", w,
+	addTool(s, "kb_patch_note", s.desc("Apply targeted edits atomically (one commit): append/prepend text, replace or insert under a heading, set/remove frontmatter keys, find/replace."), w,
 		func(ctx context.Context, in patchIn) (any, error) {
-			return s.svc.PatchNote(ctx, in.Path, in.Operations, in.ETag, in.Summary)
+			return s.ws.PatchNote(ctx, in.Path, in.Operations, in.ETag, in.Summary)
 		})
-	addTool(s, "kb_move_note", "Rename or move a note (one commit). Links in other notes are NOT rewritten; the result lists referencing_notes so you can update them.", w,
+	addTool(s, "kb_move_note", s.desc("Rename or move a note (one commit). Links in other notes are NOT rewritten; the result lists referencing_notes so you can update them."), w,
 		func(ctx context.Context, in moveIn) (any, error) {
-			return s.svc.MoveNote(ctx, in.From, in.To, in.Summary)
+			return s.ws.MoveNote(ctx, in.From, in.To, in.Summary)
 		})
-	addTool(s, "kb_delete_note", "Delete a note permanently (one commit). Git history keeps it: use kb_restore to bring it back.", toolOpts{destructive: true},
+	addTool(s, "kb_delete_note", s.desc("Delete a note permanently (one commit). Git history keeps it: use kb_restore to bring it back."), toolOpts{destructive: true},
 		func(ctx context.Context, in deleteIn) (any, error) {
-			return s.svc.DeleteNote(ctx, in.Path, in.ETag, in.Summary)
+			return s.ws.DeleteNote(ctx, in.Path, in.ETag, in.Summary)
 		})
-	addTool(s, "kb_restore", "Write the content of a note as of a revision into the vault as a new commit (also recreates deleted notes).", w,
+	addTool(s, "kb_restore", s.desc("Write the content of a note as of a revision into the vault as a new commit (also recreates deleted notes)."), w,
 		func(ctx context.Context, in restoreIn) (any, error) {
-			return s.svc.Restore(ctx, in.Path, in.Revision, in.Summary)
+			return s.ws.Restore(ctx, in.Path, in.Revision, in.Summary)
 		})
-	addTool(s, "kb_resolve_conflict", "Resolve a frozen merge: supply the final content (no conflict markers), or take ours/theirs, or delete, for each conflicted path. When all paths are resolved the merge is committed and pushed.", w,
+	addTool(s, "kb_resolve_conflict", s.desc("Resolve a frozen merge: supply the final content (no conflict markers), or take ours/theirs, or delete, for each conflicted path. When all paths are resolved the merge is committed and pushed."), w,
 		func(ctx context.Context, in resolveIn) (any, error) {
-			return s.svc.ResolveConflict(ctx, in.Summary, in.Resolutions)
+			return s.ws.ResolveConflict(ctx, in.Summary, in.Resolutions)
 		})
 }
 
@@ -266,43 +266,64 @@ type diffIn struct {
 
 type emptyIn struct{}
 
+// repoIn is the input of repository-aware tools on a multi-user server.
+type repoIn struct {
+	Repository string `json:"repository,omitempty" jsonschema:"Repository alias; empty means every repository available to you"`
+}
+
 func (s *Server) registerGitTools() {
 	ro := toolOpts{readOnly: true, idempotent: true}
-	addTool(s, "kb_log", "Commit log of the vault branch, newest first, with changed paths and pagination.", ro,
+	addTool(s, "kb_log", s.desc("Commit log of the vault branch, newest first, with changed paths and pagination."), ro,
 		func(ctx context.Context, in logIn) (any, error) {
-			return s.svc.Log(ctx, kb.LogRequest{Limit: in.Limit, Cursor: in.Cursor, Folder: in.Folder, Since: in.Since})
+			return s.ws.Log(ctx, kb.LogRequest{Limit: in.Limit, Cursor: in.Cursor, Folder: in.Folder, Since: in.Since})
 		})
-	addTool(s, "kb_history", "Commits touching one note, following renames and including the commit that deleted it.", ro,
-		func(ctx context.Context, in historyIn) (any, error) { return s.svc.History(ctx, in.Path, in.Limit) })
-	addTool(s, "kb_ls_tree", "List notes and folders as they existed at a revision (find deleted or renamed notes).", ro,
-		func(ctx context.Context, in lsTreeIn) (any, error) { return s.svc.LsTree(ctx, in.Revision, in.Folder) })
-	addTool(s, "kb_show_revision", "Content of a note at a revision, including notes deleted since.", ro,
+	addTool(s, "kb_history", s.desc("Commits touching one note, following renames and including the commit that deleted it."), ro,
+		func(ctx context.Context, in historyIn) (any, error) { return s.ws.History(ctx, in.Path, in.Limit) })
+	addTool(s, "kb_ls_tree", s.desc("List notes and folders as they existed at a revision (find deleted or renamed notes)."), ro,
+		func(ctx context.Context, in lsTreeIn) (any, error) { return s.ws.LsTree(ctx, in.Revision, in.Folder) })
+	addTool(s, "kb_show_revision", s.desc("Content of a note at a revision, including notes deleted since."), ro,
 		func(ctx context.Context, in showRevIn) (any, error) {
-			return s.svc.ShowRevision(ctx, in.Path, in.Revision)
+			return s.ws.ShowRevision(ctx, in.Path, in.Revision)
 		})
-	addTool(s, "kb_diff", "Unified diff between two revisions (or a revision and the work tree), optionally for one note.", ro,
+	addTool(s, "kb_diff", s.desc("Unified diff between two revisions (or a revision and the work tree), optionally for one note."), ro,
 		func(ctx context.Context, in diffIn) (any, error) {
-			d, err := s.svc.Diff(ctx, in.From, in.To, in.Path)
+			d, err := s.ws.Diff(ctx, in.From, in.To, in.Path)
 			if err != nil {
 				return nil, err
 			}
 			return map[string]any{"from": in.From, "to": in.To, "path": in.Path, "diff": d}, nil
 		})
+	if s.ws.Multi() {
+		addTool(s, "kb_sync_status", "Synchronisation state per repository: branch, ahead/behind, last pull/push, last error, and conflicted paths while a merge is frozen. Optionally for one repository.", ro,
+			func(ctx context.Context, in repoIn) (any, error) { return s.ws.Status(ctx, in.Repository) })
+		addTool(s, "kb_conflicts", "Details of frozen merges per repository: for each conflicted path the kind, content with markers, and base/ours/theirs sides, plus the remote commits being merged. Optionally for one repository.", ro,
+			func(ctx context.Context, in repoIn) (any, error) { return s.ws.Conflicts(ctx, in.Repository) })
+		addTool(s, "kb_sync_now", "Pull and push immediately, one repository or all of yours; a repository whose merge needs a resolution reports merge_conflict.", toolOpts{idempotent: true},
+			func(ctx context.Context, in repoIn) (any, error) { return s.ws.SyncNow(ctx, in.Repository) })
+		return
+	}
 	addTool(s, "kb_sync_status", "Synchronisation state: branch, ahead/behind, last pull/push, last error, and conflicted paths while a merge is frozen.", ro,
-		func(ctx context.Context, _ emptyIn) (any, error) { return s.svc.Status(ctx) })
+		func(ctx context.Context, _ emptyIn) (any, error) { return s.ws.Status(ctx, "") })
 	addTool(s, "kb_conflicts", "Details of a frozen merge: for each conflicted path the kind, content with markers, and base/ours/theirs sides, plus the remote commits being merged.", ro,
-		func(ctx context.Context, _ emptyIn) (any, error) { return s.svc.Conflicts(ctx) })
+		func(ctx context.Context, _ emptyIn) (any, error) { return s.ws.Conflicts(ctx, "") })
 	addTool(s, "kb_sync_now", "Pull and push immediately; fails with merge_conflict when the merge needs a resolution.", toolOpts{idempotent: true},
-		func(ctx context.Context, _ emptyIn) (any, error) { return s.svc.SyncNow(ctx) })
+		func(ctx context.Context, _ emptyIn) (any, error) { return s.ws.SyncNow(ctx, "") })
 }
 
 // ---- ops ----
 
 func (s *Server) registerOpsTools() {
+	if s.ws.Multi() {
+		addTool(s, "kb_info", "Server version, your account, and for each repository you can read: alias, branch, sync state, index freshness and the number of notes visible to you.", toolOpts{readOnly: true, idempotent: true},
+			func(ctx context.Context, _ emptyIn) (any, error) { return s.ws.Info(ctx), nil })
+		addTool(s, "kb_reindex", "Rebuild the full-text index of one repository or of all (administrator only).", toolOpts{idempotent: true},
+			func(ctx context.Context, in repoIn) (any, error) { return s.ws.Reindex(ctx, in.Repository) })
+		return
+	}
 	addTool(s, "kb_info", "Server version, vault path, branch, note and index counts, index freshness, sync state and instance id.", toolOpts{readOnly: true, idempotent: true},
-		func(ctx context.Context, _ emptyIn) (any, error) { return s.svc.GetInfo(ctx), nil })
+		func(ctx context.Context, _ emptyIn) (any, error) { return s.ws.Info(ctx), nil })
 	addTool(s, "kb_reindex", "Rebuild the full-text index from scratch.", toolOpts{idempotent: true},
-		func(ctx context.Context, _ emptyIn) (any, error) { return s.svc.Reindex(ctx) })
+		func(ctx context.Context, _ emptyIn) (any, error) { return s.ws.Reindex(ctx, "") })
 }
 
 var _ = sprintf

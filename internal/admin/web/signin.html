@@ -1,0 +1,45 @@
+{{define "content"}}
+{{with .Data}}
+<section class="signin">
+  <h1>Administrator sign-in</h1>
+  {{if eq .Step "email"}}
+  <form method="post" action="/admin/signin">
+    <input type="hidden" name="req_id" value="{{.ReqID}}">
+    <input type="hidden" name="step" value="email">
+    <label for="email">Email address</label>
+    <input id="email" type="email" name="email" autocomplete="email" autofocus required>
+    {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+    <button type="submit">Send me a code</button>
+  </form>
+  {{if .Recovery}}
+  <details>
+    <summary>Mail is not arriving</summary>
+    <form method="post" action="/admin/signin">
+      <input type="hidden" name="req_id" value="{{.ReqID}}">
+      <input type="hidden" name="step" value="token">
+      <label for="token">Recovery token of this server</label>
+      <input id="token" type="password" name="token" autocomplete="off" required>
+      <p class="hint">This is the value of KB_HTTP_TOKEN in the server configuration.</p>
+      <button type="submit">Sign in with the token</button>
+    </form>
+  </details>
+  {{end}}
+  {{else}}
+  <form method="post" action="/admin/signin">
+    <input type="hidden" name="req_id" value="{{.ReqID}}">
+    <input type="hidden" name="step" value="code">
+    <p>If <strong>{{.Email}}</strong> is the administrator of this server, a 6-digit code is on its way. It is valid for 10 minutes.</p>
+    <label for="code">Code from the email</label>
+    <input id="code" class="code" type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" autofocus required>
+    {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+    <button type="submit">Sign in</button>
+  </form>
+  <form method="post" action="/admin/signin">
+    <input type="hidden" name="req_id" value="{{.ReqID}}">
+    <input type="hidden" name="step" value="restart">
+    <button class="quiet" type="submit">Use another address or send a new code</button>
+  </form>
+  {{end}}
+</section>
+{{end}}
+{{end}}

@@ -18,6 +18,11 @@ type Candidate struct {
 // QuickOpen ranks notes by prefix, substring and fuzzy matches of text
 // against titles and paths.
 func (c *Catalog) QuickOpen(text string, limit int) []Candidate {
+	return c.QuickOpenVisible(text, limit, nil)
+}
+
+// QuickOpenVisible is QuickOpen over the notes visible accepts (all when nil).
+func (c *Catalog) QuickOpenVisible(text string, limit int, visible func(path string) bool) []Candidate {
 	tokens := strings.Fields(strings.ToLower(text))
 	if len(tokens) == 0 {
 		return nil
@@ -29,6 +34,9 @@ func (c *Catalog) QuickOpen(text string, limit int) []Candidate {
 	defer c.mu.RUnlock()
 	var out []Candidate
 	for _, n := range c.notes {
+		if visible != nil && !visible(n.Path) {
+			continue
+		}
 		haystacks := []string{strings.ToLower(vault.Stem(n.Path)), strings.ToLower(n.Title), strings.ToLower(n.Path)}
 		total := 0.0
 		for _, tok := range tokens {
@@ -51,6 +59,15 @@ func (c *Catalog) QuickOpen(text string, limit int) []Candidate {
 		if total > 0 {
 			out = append(out, Candidate{Path: n.Path, Title: n.Title, Score: total / float64(len(tokens))})
 		}
+	}
+	return TopCandidates(out, limit)
+}
+
+// TopCandidates sorts candidates by score (descending) then path and keeps
+// the first limit.
+func TopCandidates(out []Candidate, limit int) []Candidate {
+	if limit <= 0 {
+		limit = 10
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Score != out[j].Score {

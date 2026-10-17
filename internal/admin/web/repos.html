@@ -1,0 +1,56 @@
+{{define "content"}}
+<h1>Repositories</h1>
+<p class="lede">Each repository is a Git-backed folder of notes with its own clone, index and sync. A repository you add is visible to nobody, you included, until you grant access.</p>
+{{if .Data}}
+<table class="list">
+  <thead><tr><th>Alias</th><th>Remote</th><th>Status</th><th>Last sync</th><th><span class="sr">Actions</span></th></tr></thead>
+  <tbody>
+  {{range .Data}}
+  <tr>
+    <td data-label="Alias"><a class="mono" href="/admin/repos/{{.Alias}}">{{.Alias}}</a></td>
+    <td data-label="Remote" class="mono wrap">{{if .URL}}{{.URL}}{{else}}local only{{end}} <span class="dim">({{.Branch}})</span></td>
+    <td data-label="Status"><span class="state s-{{.Status}}">{{.Status}}</span>{{if .Reason}}<span class="reason">{{.Reason}}</span>{{end}}</td>
+    <td data-label="Last sync">{{when .LastSync}}</td>
+    <td class="actions"><a href="/admin/access/{{.Alias}}">Access</a></td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="empty">No repositories yet. Add the first one below.</p>
+{{end}}
+
+<h2>Add a repository</h2>
+<form class="stack" method="post" action="/admin/repos">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <label for="alias">Alias</label>
+  <input id="alias" class="mono" type="text" name="alias" pattern="[a-z0-9][a-z0-9\-]{0,31}" autocomplete="off" required>
+  <p class="hint">The first part of every path, for example <span class="mono">notes</span> in <span class="mono">notes/Projects/plan.md</span>. Lowercase letters, digits and hyphens; it cannot be changed later.</p>
+  <label for="url">Remote URL</label>
+  <input id="url" class="mono" type="text" name="url" placeholder="https://github.com/owner/repo.git" autocomplete="off" required>
+  <label for="branch">Branch</label>
+  <input id="branch" class="mono" type="text" name="branch" value="main" autocomplete="off">
+  {{template "credential" "new"}}
+  <button type="submit">Add repository</button>
+</form>
+{{end}}
+
+{{define "credential"}}
+<fieldset class="credential">
+  <legend>Credential</legend>
+  <label class="choice"><input type="radio" name="credential" value="token" checked> Access token, for an <span class="mono">https://</span> URL</label>
+  <div class="sub">
+    <label for="token-{{.}}">Token</label>
+    <input id="token-{{.}}" type="password" name="token" autocomplete="off">
+    <p class="hint">On GitHub: a fine-grained token limited to this repository, with Contents set to read and write.</p>
+  </div>
+  <label class="choice"><input type="radio" name="credential" value="generate"> SSH key made by this server, for an SSH URL</label>
+  <div class="sub"><p class="hint">You get the public key to register as a deploy key with write access. The private key never leaves the server.</p></div>
+  <label class="choice"><input type="radio" name="credential" value="key"> My own SSH private key, for an SSH URL</label>
+  <div class="sub">
+    <label for="key-{{.}}">Private key</label>
+    <textarea id="key-{{.}}" class="mono" name="ssh_key" rows="5" autocomplete="off" spellcheck="false"></textarea>
+    <p class="hint">The whole file including its BEGIN and END lines. Keys protected by a passphrase are not supported.</p>
+  </div>
+</fieldset>
+{{end}}

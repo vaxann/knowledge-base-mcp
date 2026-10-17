@@ -29,6 +29,11 @@ type GrepRequest struct {
 	ContextLines  int
 	Limit         int
 	MaxFileSize   int64
+	// Visible, when set, restricts the search to paths it accepts.
+	Visible func(path string) bool
+	// PathPrefix is prepended to a path before Glob is matched, for vaults
+	// presented under a prefix.
+	PathPrefix string
 }
 
 // GrepMatch is one matching line.
@@ -82,8 +87,11 @@ func Grep(ctx context.Context, v *vault.Vault, req GrepRequest) (GrepResult, err
 		if req.MaxFileSize > 0 && info.Size() > req.MaxFileSize {
 			return nil
 		}
+		if req.Visible != nil && !req.Visible(rel) {
+			return nil
+		}
 		if req.Glob != "" {
-			if ok, _ := doublestar.Match(req.Glob, rel); !ok {
+			if ok, _ := doublestar.Match(req.Glob, req.PathPrefix+rel); !ok {
 				return nil
 			}
 		}

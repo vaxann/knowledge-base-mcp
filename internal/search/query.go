@@ -413,13 +413,17 @@ type QueryRequest struct {
 type Row map[string]any
 
 // RunQuery evaluates a query over the catalog.
-func (c *Catalog) RunQuery(req QueryRequest) ([]Row, error) {
+func (c *Catalog) RunQuery(req QueryRequest) ([]Row, error) { return QueryNotes(c.Notes(), req) }
+
+// QueryNotes evaluates a query over the given notes (sorted by path), which
+// may come from one catalog or from several.
+func QueryNotes(notes []*NoteMeta, req QueryRequest) ([]Row, error) {
 	expr, err := ParseWhere(req.Where)
 	if err != nil {
 		return nil, err
 	}
 	var matched []*NoteMeta
-	for _, n := range c.Notes() {
+	for _, n := range notes {
 		if expr.Eval(n) {
 			matched = append(matched, n)
 		}

@@ -170,11 +170,17 @@ type TagCount struct {
 }
 
 // Tags returns tags (optionally filtered by prefix) sorted by count then name.
-func (c *Catalog) Tags(prefix string) []TagCount {
+func (c *Catalog) Tags(prefix string) []TagCount { return c.TagsVisible(prefix, nil) }
+
+// TagsVisible is Tags counted over the notes visible accepts (all when nil).
+func (c *Catalog) TagsVisible(prefix string, visible func(path string) bool) []TagCount {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	counts := map[string]int{}
 	for _, n := range c.notes {
+		if visible != nil && !visible(n.Path) {
+			continue
+		}
 		for _, t := range n.Tags {
 			if prefix == "" || strings.HasPrefix(strings.ToLower(t), strings.ToLower(prefix)) {
 				counts[t]++
@@ -185,11 +191,16 @@ func (c *Catalog) Tags(prefix string) []TagCount {
 	for t, n := range counts {
 		out = append(out, TagCount{Tag: t, Count: n})
 	}
+	SortTags(out)
+	return out
+}
+
+// SortTags orders tag counts by count (descending) then name.
+func SortTags(out []TagCount) {
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Count != out[j].Count {
 			return out[i].Count > out[j].Count
 		}
 		return out[i].Tag < out[j].Tag
 	})
-	return out
 }

@@ -19,44 +19,75 @@ import (
 	"github.com/vaxann/knowledge-base-mcp/internal/kb"
 	"github.com/vaxann/knowledge-base-mcp/internal/oauth"
 	"github.com/vaxann/knowledge-base-mcp/internal/vault"
+	"github.com/vaxann/knowledge-base-mcp/internal/workspace"
 )
 
-// Server wraps an MCP server bound to one kb.Service.
+// Server wraps an MCP server bound to a workspace: one vault for a classic
+// server, a set of repositories for a multi-user one.
 type Server struct {
-	svc       *kb.Service
+	ws        *workspace.Workspace
 	mcp       *mcp.Server
 	log       *slog.Logger
 	urlMu     sync.RWMutex
 	pubURL    string
 	maxUpload int64
+	// tools records every registered tool name, in order.
+	tools []string
+	// testCaller, when set, is the account every call acts as. In-process
+	// tests use it in place of an authenticated HTTP request.
+	testCaller *workspace.Caller
 }
 
 func jsonMarshal(v any) ([]byte, error) { return json.Marshal(v) }
 
-// New registers every tool and resource.
+// New registers every tool and resource of a classic single-vault server.
 func New(svc *kb.Service, version string, log *slog.Logger) *Server {
+	return NewWorkspace(workspace.NewClassic(svc, log), version, log)
+}
+
+// NewWorkspace registers every tool and resource over a workspace.
+func NewWorkspace(ws *workspace.Workspace, version string, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	s := &Server{svc: svc, log: log, maxUpload: svc.MaxUploadBytes()}
+	s := &Server{ws: ws, log: log, maxUpload: ws.MaxUploadBytes()}
 	s.mcp = mcp.NewServer(&mcp.Implementation{Name: "knowledge-base-mcp", Version: version}, &mcp.ServerOptions{
-		Instructions: instructions(svc.ReadOnly()),
+		Instructions: instructions(ws.ReadOnly(), ws.Multi()),
 	})
 	s.registerReadTools()
 	s.registerSearchTools()
 	s.registerGitTools()
 	s.registerOpsTools()
 	s.registerFileTools()
-	if !svc.ReadOnly() {
+	if !ws.ReadOnly() {
 		s.registerWriteTools()
 	}
 	s.registerResources()
 	return s
 }
 
-func instructions(readOnly bool) string {
+// ToolNames lists the registered tools.
+func (s *Server) ToolNames() []string { return append([]string(nil), s.tools...) }
+
+// multiNote is appended to the description of path-taking tools on a
+// multi-user server.
+const multiNote = " Paths start with a repository alias: <alias>/<path inside the repository>."
+
+// desc adds the alias note to a tool description when it applies.
+func (s *Server) desc(text string) string {
+	if s.ws.Multi() {
+		return text + multiNote
+	}
+	return text
+}
+
+func instructions(readOnly, multi bool) string {
 	b := strings.Builder{}
-	b.WriteString("This server exposes a Git-backed Markdown knowledge base. Paths are vault-relative with forward slashes. ")
+	if multi {
+		b.WriteString("This server exposes Git-backed Markdown knowledge bases, one per repository. Every path starts with a repository alias followed by the path inside that repository, with forward slashes (for example notes/Projects/plan.md); kb_list on the empty folder shows the repositories available to you. You see only the folders you were given access to: anything else answers not_found, and a write to a folder you may only read answers forbidden. Search tools cover all your repositories unless a folder narrows them; history tools (kb_log, kb_diff, kb_ls_tree) work inside one repository named by their folder or path; links between notes resolve inside one repository. ")
+	} else {
+		b.WriteString("This server exposes a Git-backed Markdown knowledge base. Paths are vault-relative with forward slashes. ")
+	}
 	b.WriteString("Use kb_search (ranked, stemmed), kb_grep (exact/regex), kb_query (frontmatter predicates) or kb_context (retrieval bundle) to find notes; kb_get_note returns an etag to pass to write tools. ")
 	if readOnly {
 		b.WriteString("The server is read-only.")
@@ -86,6 +117,8 @@ type HTTPOptions struct {
 	OAuth *oauth.Server
 	// PublicURL is the base for signed file links (https://kb.example.com).
 	PublicURL string
+	// Mount, when set, adds further routes (the admin panel) to the mux.
+	Mount func(mux *http.ServeMux)
 }
 
 // IsLoopback reports whether a listen address binds only to localhost.
@@ -124,19 +157,28 @@ func (s *Server) HandlerWith(o HTTPOptions) http.Handler {
 		_, _ = w.Write([]byte(`{"status":"ok"}` + "\n"))
 	})
 	var protected http.Handler
-	var authed func(*http.Request) bool
+	// authed reports whether a request carries a valid token and, on a
+	// multi-user server, returns a context acting as its account.
+	var authed func(*http.Request) (context.Context, bool)
 	if o.OAuth != nil {
 		o.OAuth.Mount(mux)
 		protected = o.OAuth.Middleware(mcpHandler)
-		authed = func(r *http.Request) bool {
-			tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-			return ok && o.OAuth.Valid(strings.TrimSpace(tok))
+		authed = func(r *http.Request) (context.Context, bool) {
+			id, ok := o.OAuth.AccountOf(r)
+			if !ok {
+				return r.Context(), false
+			}
+			if !s.ws.Multi() {
+				return r.Context(), true
+			}
+			c, ok := s.ws.Caller(id)
+			return workspace.WithCaller(r.Context(), c), ok
 		}
 	} else {
 		protected = bearerAuth(o.Token, mcpHandler)
-		authed = func(r *http.Request) bool {
+		authed = func(r *http.Request) (context.Context, bool) {
 			tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-			return ok && o.Token != "" && subtle.ConstantTimeCompare([]byte(strings.TrimSpace(tok)), []byte(o.Token)) == 1
+			return r.Context(), ok && o.Token != "" && subtle.ConstantTimeCompare([]byte(strings.TrimSpace(tok)), []byte(o.Token)) == 1
 		}
 	}
 	mux.Handle("/mcp", protected)
@@ -145,6 +187,9 @@ func (s *Server) HandlerWith(o HTTPOptions) http.Handler {
 		s.SetPublicURL(o.PublicURL)
 	}
 	s.fileRoutes(mux, authed)
+	if o.Mount != nil {
+		o.Mount(mux)
+	}
 	return mux
 }
 
@@ -167,10 +212,13 @@ func bearerAuth(token string, next http.Handler) http.Handler {
 // RunHTTP serves the streamable HTTP transport until ctx is done. A bearer
 // token is mandatory unless the listen address is loopback.
 func (s *Server) RunHTTP(ctx context.Context, o HTTPOptions) error {
-	if o.Token == "" && !IsLoopback(o.Listen) {
+	if o.Token == "" && !s.ws.Multi() && !IsLoopback(o.Listen) {
 		return fmt.Errorf("refusing to listen on %s without a token: set KB_HTTP_TOKEN or bind to 127.0.0.1", o.Listen)
 	}
-	if o.Token == "" {
+	if s.ws.Multi() && o.OAuth == nil {
+		return errors.New("a multi-user server cannot run without its sign-in service")
+	}
+	if o.Token == "" && !s.ws.Multi() {
 		s.log.Warn("HTTP transport without a token: only safe because it is bound to loopback", "listen", o.Listen)
 	}
 	srv := &http.Server{Addr: o.Listen, Handler: s.HandlerWith(o), ReadHeaderTimeout: 10 * time.Second}
@@ -214,6 +262,26 @@ func clientCtx(ctx context.Context, req *mcp.CallToolRequest) context.Context {
 	return ctx
 }
 
+// callerCtx attaches the account a call acts as. On a multi-user server it
+// comes from the bearer token of the HTTP request, looked up again on every
+// call so that disabling an account takes effect at once. A call without an
+// account gets no caller and therefore sees nothing.
+func (s *Server) callerCtx(ctx context.Context, extra *mcp.RequestExtra) context.Context {
+	if !s.ws.Multi() {
+		return ctx
+	}
+	if s.testCaller != nil {
+		return workspace.WithCaller(ctx, *s.testCaller)
+	}
+	if extra == nil || extra.TokenInfo == nil {
+		return ctx
+	}
+	if c, ok := s.ws.Caller(extra.TokenInfo.UserID); ok {
+		return workspace.WithCaller(ctx, c)
+	}
+	return ctx
+}
+
 func errorResult(err error) (*mcp.CallToolResult, any) {
 	var ke *kb.Error
 	if !errors.As(err, &ke) {
@@ -236,8 +304,9 @@ func addTool[In any](s *Server, name, desc string, o toolOpts, h func(ctx contex
 		d := o.destructive
 		t.Annotations.DestructiveHint = &d
 	}
+	s.tools = append(s.tools, name)
 	mcp.AddTool(s.mcp, t, func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
-		out, err := h(clientCtx(ctx, req), in)
+		out, err := h(s.callerCtx(clientCtx(ctx, req), req.Extra), in)
 		if err != nil {
 			s.log.Debug("tool error", "tool", name, "err", err)
 			res, payload := errorResult(err)
@@ -267,23 +336,24 @@ func (s *Server) registerResources() {
 
 func (s *Server) readResource(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 	uri := req.Params.URI
+	ctx = s.callerCtx(ctx, req.Extra)
 	switch {
 	case strings.HasPrefix(uri, "kb://note/"):
 		path := strings.TrimPrefix(uri, "kb://note/")
-		n, err := s.svc.GetNote(ctx, path)
+		n, err := s.ws.GetNote(ctx, path)
 		if err != nil {
 			return nil, mcp.ResourceNotFoundError(uri)
 		}
 		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: uri, MIMEType: "text/markdown", Text: n.Content}}}, nil
 	case strings.HasPrefix(uri, "kb://file/"):
-		data, info, err := s.svc.ReadFile(ctx, strings.TrimPrefix(uri, "kb://file/"), 0)
+		data, info, err := s.ws.ReadFile(ctx, strings.TrimPrefix(uri, "kb://file/"), 0)
 		if err != nil {
 			return nil, mcp.ResourceNotFoundError(uri)
 		}
 		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: uri, MIMEType: info.MediaType, Blob: data}}}, nil
 	case strings.HasPrefix(uri, "kb://folder/"):
 		folder := strings.TrimPrefix(uri, "kb://folder/")
-		res, err := s.svc.List(ctx, kb.ListRequest{Folder: folder, Limit: 1000})
+		res, err := s.ws.List(ctx, kb.ListRequest{Folder: folder, Limit: 1000})
 		if err != nil {
 			return nil, mcp.ResourceNotFoundError(uri)
 		}

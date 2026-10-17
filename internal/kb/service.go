@@ -27,6 +27,9 @@ type Service struct {
 	log     *slog.Logger
 	version string
 	remote  string // "origin" or "" when no remote
+	// mount is the alias the vault is presented under ("" for the classic
+	// single-vault server): callers address it as "<mount>/<path>".
+	mount string
 
 	mu sync.Mutex // serialises writes and sync operations
 
@@ -39,20 +42,37 @@ type Service struct {
 	pushRequested chan struct{}
 	instanceID    string
 	lock          *instanceLock
-	linkMu        sync.Mutex
-	linkKey       []byte
 	stopOnce      sync.Once
 	stop          chan struct{}
 	wg            sync.WaitGroup
 }
 
+// Options adjust how a vault is opened.
+type Options struct {
+	// Mount presents the vault under an alias: every path accepted or
+	// returned by the service is "<Mount>/<path>". Empty for a classic server.
+	Mount string
+	// Git overrides the credentials derived from the configuration (a
+	// repository added at runtime brings its own token or SSH key).
+	Git *gitrepo.Options
+}
+
 // Open prepares the service: clone if needed, validate the clone, open the
 // index and build the catalog.
 func Open(ctx context.Context, cfg config.Config, log *slog.Logger, version string) (*Service, error) {
+	return OpenWith(ctx, cfg, log, version, Options{})
+}
+
+// OpenWith is Open with options.
+func OpenWith(ctx context.Context, cfg config.Config, log *slog.Logger, version string, o Options) (*Service, error) {
 	if log == nil {
 		log = slog.Default()
 	}
 	opts := gitrepo.Options{AuthorName: cfg.Git.AuthorName, AuthorEmail: cfg.Git.AuthorEmail, Token: cfg.Git.Token, Username: cfg.Git.Username, Logger: log}
+	if o.Git != nil {
+		opts = *o.Git
+		opts.AuthorName, opts.AuthorEmail, opts.Logger = cfg.Git.AuthorName, cfg.Git.AuthorEmail, log
+	}
 	if _, err := os.Stat(cfg.Vault.Path); errors.Is(err, fs.ErrNotExist) || isEmptyDir(cfg.Vault.Path) {
 		if cfg.Vault.Remote == "" {
 			return nil, fmt.Errorf("vault path %s does not exist and no KB_GIT_REMOTE is configured to clone from", cfg.Vault.Path)
@@ -84,7 +104,7 @@ func Open(ctx context.Context, cfg config.Config, log *slog.Logger, version stri
 	if err != nil {
 		return nil, err
 	}
-	s := &Service{cfg: cfg, v: v, repo: repo, cat: search.NewCatalog(), log: log, version: version, lock: lock,
+	s := &Service{cfg: cfg, v: v, repo: repo, cat: search.NewCatalog(), log: log, version: version, lock: lock, mount: o.Mount,
 		pushRequested: make(chan struct{}, 1), stop: make(chan struct{}), state: "ok"}
 	if repo.HasRemote(ctx, "origin") {
 		s.remote = "origin"
@@ -298,6 +318,16 @@ func (s *Service) ReadOnly() bool { return s.cfg.Server.ReadOnly }
 // Vault exposes the sandboxed vault (read helpers for resources).
 func (s *Service) Vault() *vault.Vault { return s.v }
 
+// Mount returns the alias the vault is presented under ("" when classic).
+func (s *Service) Mount() string { return s.mount }
+
+// IndexDir returns the directory holding the index and other server-owned
+// files of this vault.
+func (s *Service) IndexDir() string { return s.cfg.Search.IndexDir }
+
+// Branch returns the branch the service tracks.
+func (s *Service) Branch() string { return s.cfg.Git.Branch }
+
 // InstanceID identifies this server instance in commit trailers.
 func (s *Service) InstanceID() string { return s.instanceID }
 
@@ -323,6 +353,9 @@ func (s *Service) commitMessage(ctx context.Context, subject, summary string) st
 	b.WriteString("\n\n")
 	if c := clientOf(ctx); c != "" {
 		b.WriteString("KB-Client: " + sanitizeTrailer(c) + "\n")
+	}
+	if u := userOf(ctx); u != "" {
+		b.WriteString("KB-User: " + sanitizeTrailer(u) + "\n")
 	}
 	b.WriteString("KB-Instance: " + sanitizeTrailer(s.instanceID) + "\n")
 	return b.String()

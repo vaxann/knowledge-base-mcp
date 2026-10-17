@@ -79,7 +79,7 @@ func TestHTTPFileEndpoints(t *testing.T) {
 	ctx := context.Background()
 
 	// Signed download link works without a token; wrong sig / expiry do not.
-	link, exp, err := srv.svc.SignedLink(ts.URL, "get", "Files/scan.pdf", time.Minute)
+	link, exp, err := srv.ws.SignedLink(context.Background(), ts.URL, "get", "Files/scan.pdf", time.Minute)
 	if err != nil || !strings.HasPrefix(link, ts.URL+"/files/Files/scan.pdf?") || time.Until(exp) < 30*time.Second {
 		t.Fatalf("link: %s %v %v", link, exp, err)
 	}
@@ -113,7 +113,7 @@ func TestHTTPFileEndpoints(t *testing.T) {
 	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "text/markdown" {
 		t.Errorf("bearer download: %d %s", resp.StatusCode, resp.Header.Get("Content-Type"))
 	}
-	if _, _, err := srv.svc.SignedLink(ts.URL, "get", "Nope.pdf", time.Minute); err == nil {
+	if _, _, err := srv.ws.SignedLink(context.Background(), ts.URL, "get", "Nope.pdf", time.Minute); err == nil {
 		t.Error("link for missing file must fail")
 	}
 
@@ -135,7 +135,7 @@ func TestHTTPFileEndpoints(t *testing.T) {
 	}
 
 	// Upload page for a folder: form renders, multipart POST stores the file under its own name.
-	upLink, _, err := srv.svc.SignedLink(ts.URL, "put", "Inbox/", time.Minute)
+	upLink, _, err := srv.ws.SignedLink(context.Background(), ts.URL, "put", "Inbox/", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestHTTPFileEndpoints(t *testing.T) {
 		t.Errorf("filename must be reduced to its base name:\n%s", page)
 	}
 	// Expired link.
-	old, _, _ := srv.svc.SignedLink(ts.URL, "get", "Files/scan.pdf", time.Nanosecond)
+	old, _, _ := srv.ws.SignedLink(context.Background(), ts.URL, "get", "Files/scan.pdf", time.Nanosecond)
 	time.Sleep(1100 * time.Millisecond)
 	if resp, _ = http.Get(old); resp.StatusCode != 403 {
 		t.Errorf("expired link: %d", resp.StatusCode)

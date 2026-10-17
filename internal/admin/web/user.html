@@ -1,0 +1,38 @@
+{{define "content"}}
+{{with .Data}}
+<p class="back"><a href="/admin/users">Accounts</a></p>
+<h1 class="path">{{.Email}}</h1>
+<p class="lede">{{if .Admin}}The administrator manages this server but reads and writes notes only where a rule below says so.{{else if .Disabled}}This account is disabled: it cannot sign in and its rules are dormant.{{else}}Every rule this account holds, across repositories.{{end}}</p>
+{{if .Rules}}
+<table class="list">
+  <thead><tr><th>Folder</th><th>Level</th><th><span class="sr">Actions</span></th></tr></thead>
+  <tbody>
+  {{range .Rules}}
+  <tr>
+    <td data-label="Folder"><a class="mono" href="/admin/access/{{.Alias}}?folder={{.Folder}}">{{.Shown}}</a>{{if .Orphan}} <span class="tag bad">folder no longer exists</span>{{end}}</td>
+    <td data-label="Level"><span class="level {{.Level}}">{{.Level}}</span></td>
+    <td class="actions">
+      <form method="post" action="/admin/access/{{.Alias}}">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <input type="hidden" name="account" value="{{$.Data.ID}}">
+        <input type="hidden" name="folder" value="{{.Folder}}">
+        <input type="hidden" name="level" value="inherit">
+        <input type="hidden" name="return" value="/admin/users/{{$.Data.ID}}">
+        <button class="quiet" type="submit">Clear rule</button>
+      </form>
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="empty">No rules yet, so this account sees nothing. Open a repository below and pick the folder to share.</p>
+{{end}}
+{{if .Repos}}
+<h2>Grant access in</h2>
+<ul class="folders">
+  {{range .Repos}}<li><a class="mono" href="/admin/access/{{.}}">{{.}}</a></li>{{end}}
+</ul>
+{{end}}
+{{end}}
+{{end}}

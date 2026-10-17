@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>{{.Title}} · knowledge base admin</title>
+<link rel="stylesheet" href="/admin/static/admin.css">
+<script src="/admin/static/admin.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/admin/users">knowledge base</a>
+  {{if .Admin}}
+  <nav aria-label="Sections">
+    <a href="/admin/users"{{if eq .Nav "users"}} aria-current="page"{{end}}>Accounts</a>
+    <a href="/admin/repos"{{if eq .Nav "repos"}} aria-current="page"{{end}}>Repositories</a>
+  </nav>
+  <form class="who" method="post" action="/admin/signout">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <span>{{.Admin}}</span>
+    <button class="quiet" type="submit">Sign out</button>
+  </form>
+  {{end}}
+</header>
+<main>
+{{if .Flash}}<p class="flash{{if .FlashErr}} bad{{end}}" role="status">{{.Flash}}</p>{{end}}
+{{template "content" .}}
+</main>
+</body>
+</html>

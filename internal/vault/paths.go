@@ -19,6 +19,21 @@ var ErrInvalidPath = errors.New("invalid_path")
 // ErrNotFound is returned for missing or excluded paths.
 var ErrNotFound = errors.New("not_found")
 
+// PathError is a not_found failure about one path. Keeping the path apart
+// from the text lets callers that present paths differently (a repository
+// mounted under an alias) rebuild the message.
+type PathError struct {
+	Path   string
+	Detail string // optional suffix such as " is a folder"
+}
+
+func (e *PathError) Error() string { return ErrNotFound.Error() + ": " + e.Path + e.Detail }
+
+// Is makes errors.Is(err, ErrNotFound) hold.
+func (e *PathError) Is(target error) bool { return target == ErrNotFound }
+
+func notFound(p, detail string) error { return &PathError{Path: p, Detail: detail} }
+
 // CleanRel validates a vault-relative path and returns its canonical form
 // (forward slashes, no leading/trailing slash). "" denotes the vault root.
 func CleanRel(p string) (string, error) {

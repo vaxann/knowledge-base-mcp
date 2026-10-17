@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/mail"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -13,6 +14,9 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/vaxann/knowledge-base-mcp/internal/secret"
+	"github.com/vaxann/knowledge-base-mcp/internal/store"
 )
 
 // Config is the fully resolved server configuration.
@@ -28,6 +32,9 @@ type Vault struct {
 	Path    string   `yaml:"path"`
 	Remote  string   `yaml:"remote"`
 	Exclude []string `yaml:"exclude"`
+	// Alias names the configured vault when a multi-user server imports it
+	// as its first repository.
+	Alias string `yaml:"alias"`
 }
 
 // Git configures commits and synchronisation.
@@ -44,6 +51,10 @@ type Git struct {
 	// It is never written to disk or logged.
 	Token    string `yaml:"-"`
 	Username string `yaml:"-"`
+	// SSHKnownHosts holds known_hosts lines. When set, a multi-user server
+	// trusts only these hosts for SSH repositories instead of pinning host
+	// keys on first contact.
+	SSHKnownHosts string `yaml:"ssh_known_hosts"`
 }
 
 // Search configures the full-text index and grep.
@@ -62,6 +73,47 @@ type Server struct {
 	MaxUpload string `yaml:"max_upload"`
 	// LinkTTL is the default lifetime of signed download/upload links.
 	LinkTTL time.Duration `yaml:"link_ttl"`
+	// DataDir holds the state file and the repositories added at runtime by
+	// a multi-user server. Defaults to the index directory.
+	DataDir  string   `yaml:"data_dir"`
+	Accounts Accounts `yaml:"accounts"`
+}
+
+// Accounts switches the HTTP transport to multi-user mode and configures the
+// email sign-in.
+type Accounts struct {
+	// AdminEmail is the administrator's address. Setting it (together with
+	// an HTTP listen address) enables multi-user mode.
+	AdminEmail string `yaml:"admin_email"`
+	// MailFrom is the sender of sign-in emails, e.g. "KB <login@mail.example.com>".
+	MailFrom string `yaml:"mail_from"`
+	// ResendAPIKey authenticates to the mail provider. Environment only;
+	// never logged.
+	ResendAPIKey string `yaml:"-"`
+	// SecretKey (base64, 32 bytes) encrypts repository credentials at rest.
+	// Environment only; never logged or stored.
+	SecretKey string `yaml:"-"`
+}
+
+// MultiUser reports whether the server runs with accounts, several
+// repositories and access rules. It needs the HTTP transport: stdio always
+// serves one local vault.
+func (c Config) MultiUser() bool {
+	return c.Server.HTTP.Listen != "" && c.Server.Accounts.AdminEmail != ""
+}
+
+// DataDirOrDefault returns the data directory.
+func (c Config) DataDirOrDefault() string {
+	if c.Server.DataDir != "" {
+		return c.Server.DataDir
+	}
+	return c.Search.IndexDir
+}
+
+// SecretKeyBytes returns the decoded secret key; Validate has checked it.
+func (c Config) SecretKeyBytes() []byte {
+	key, _ := secret.ParseKey(c.Server.Accounts.SecretKey)
+	return key
 }
 
 // MaxUploadBytes returns the parsed upload limit.
@@ -94,6 +146,7 @@ type HTTP struct {
 func Default() Config {
 	cache, _ := os.UserCacheDir()
 	return Config{
+		Vault: Vault{Alias: "main"},
 		Git: Git{
 			Branch:        "main",
 			AuthorName:    "Knowledge Base MCP",
@@ -160,6 +213,13 @@ func applyEnv(cfg *Config, env func(string) string) error {
 	str("KB_OAUTH_STATE", &cfg.Server.HTTP.OAuthState)
 	str("KB_MAX_UPLOAD", &cfg.Server.MaxUpload)
 	str("KB_GREP_MAX_FILE_SIZE", &cfg.Search.GrepMaxFileSize)
+	str("KB_VAULT_ALIAS", &cfg.Vault.Alias)
+	str("KB_SSH_KNOWN_HOSTS", &cfg.Git.SSHKnownHosts)
+	str("KB_DATA_DIR", &cfg.Server.DataDir)
+	str("KB_ADMIN_EMAIL", &cfg.Server.Accounts.AdminEmail)
+	str("KB_MAIL_FROM", &cfg.Server.Accounts.MailFrom)
+	str("KB_RESEND_API_KEY", &cfg.Server.Accounts.ResendAPIKey)
+	str("KB_SECRET_KEY", &cfg.Server.Accounts.SecretKey)
 	if v := env("KB_EXCLUDE"); v != "" {
 		cfg.Vault.Exclude = splitList(v)
 	}
@@ -208,10 +268,12 @@ func splitList(v string) []string {
 
 // Validate checks the configuration for problems that must stop startup.
 func (c Config) Validate() error {
-	if c.Vault.Path == "" {
+	multi := c.MultiUser()
+	// A multi-user server may start with no repository at all.
+	if c.Vault.Path == "" && !multi {
 		return errors.New("vault path is required: set KB_VAULT_PATH or vault.path in the config file")
 	}
-	if !filepath.IsAbs(c.Vault.Path) {
+	if c.Vault.Path != "" && !filepath.IsAbs(c.Vault.Path) {
 		return fmt.Errorf("vault path must be absolute: %q", c.Vault.Path)
 	}
 	if c.Git.Branch == "" {
@@ -233,17 +295,53 @@ func (c Config) Validate() error {
 		}
 		ip := net.ParseIP(host)
 		loopback := host == "localhost" || (ip != nil && ip.IsLoopback())
-		if !loopback && h.Token == "" {
+		if !loopback && h.Token == "" && !multi {
 			return fmt.Errorf("server.http.listen=%s is not loopback: set KB_HTTP_TOKEN (bearer token) before exposing the server", h.Listen)
 		}
 		if (h.TLSCert == "") != (h.TLSKey == "") {
 			return errors.New("server.http.tls_cert and tls_key must be set together")
 		}
 	}
+	if multi {
+		if err := c.validateMultiUser(); err != nil {
+			return err
+		}
+	}
 	switch strings.ToLower(c.Server.LogLevel) {
 	case "debug", "info", "warn", "error":
 	default:
 		return fmt.Errorf("server.log_level must be debug, info, warn or error, got %q", c.Server.LogLevel)
+	}
+	return nil
+}
+
+// validateMultiUser checks the settings multi-user mode cannot run without,
+// naming the missing one.
+func (c Config) validateMultiUser() error {
+	a := c.Server.Accounts
+	if _, err := store.NormalizeEmail(a.AdminEmail); err != nil {
+		return fmt.Errorf("KB_ADMIN_EMAIL must be a bare email address, got %q", a.AdminEmail)
+	}
+	if a.ResendAPIKey == "" {
+		return errors.New("multi-user mode needs a mail API key: set KB_RESEND_API_KEY")
+	}
+	if a.MailFrom == "" {
+		return errors.New("multi-user mode needs a sender address: set KB_MAIL_FROM, e.g. \"KB <login@mail.example.com>\"")
+	}
+	if _, err := mail.ParseAddress(a.MailFrom); err != nil {
+		return fmt.Errorf("KB_MAIL_FROM is not a valid sender address: %q", a.MailFrom)
+	}
+	if a.SecretKey == "" {
+		return errors.New("multi-user mode needs a key to encrypt repository credentials: set KB_SECRET_KEY (openssl rand -base64 32)")
+	}
+	if _, err := secret.ParseKey(a.SecretKey); err != nil {
+		return fmt.Errorf("KB_SECRET_KEY: %w", err)
+	}
+	if !store.ValidAlias(c.Vault.Alias) {
+		return fmt.Errorf("KB_VAULT_ALIAS %q must be 1-32 lowercase letters, digits or hyphens and start with a letter or digit", c.Vault.Alias)
+	}
+	if dir := c.DataDirOrDefault(); !filepath.IsAbs(dir) {
+		return fmt.Errorf("data directory must be absolute: %q (set KB_DATA_DIR)", dir)
 	}
 	return nil
 }

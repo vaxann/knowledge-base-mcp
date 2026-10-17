@@ -45,36 +45,49 @@ func (s *Service) mutate(ctx context.Context, fn func() (*mutation, error)) (*Wr
 	}
 	m, err := fn()
 	if err != nil {
-		return nil, wrap(err)
+		return nil, s.wrap(err)
 	}
 	if err := s.repo.Stage(ctx, m.paths...); err != nil {
-		return nil, wrap(err)
+		return nil, s.wrap(err)
 	}
 	hash, err := s.repo.Commit(ctx, s.commitMessage(ctx, m.subject, m.summary))
 	if err != nil {
-		return nil, wrap(err)
+		return nil, s.wrap(err)
 	}
 	if err := s.refreshPaths(ctx, m.paths...); err != nil {
-		return nil, wrap(err)
+		return nil, s.wrap(err)
 	}
 	m.result.Commit = hash
 	s.requestPush()
 	return m.result, nil
 }
 
-func (s *Service) checkNotePath(p string) (string, error) {
-	clean, err := vault.CleanRel(p)
+// writable resolves a caller path for a mutation and checks that the caller
+// may change it, before any lock is taken or the remote is contacted.
+func (s *Service) writable(ctx context.Context, p string) (string, error) {
+	if s.ReadOnly() {
+		return "", E(CodeReadOnly, "the server runs in read-only mode")
+	}
+	rel, err := s.in(p)
 	if err != nil {
+		return "", s.wrap(err)
+	}
+	if err := s.guardWrite(ctx, rel); err != nil {
 		return "", err
 	}
+	return rel, nil
+}
+
+// checkNotePath validates a vault-relative note path.
+func (s *Service) checkNotePath(clean string) (string, error) {
 	if clean == "" {
 		return "", E(CodeInvalidPath, "path must name a note")
 	}
 	if !vault.IsMarkdown(clean) {
 		if s.v.Exists(clean) {
-			return "", E(CodeUnsupportedFile, "%s is not a Markdown note", clean)
+			return "", E(CodeUnsupportedFile, "%s is not a Markdown note", s.out(clean))
 		}
-		return "", E(CodeInvalidPath, "note paths must end with .md: %s", clean)
+		return "", E(CodeInvalidPath, "note paths must end with .md: %s", s.out(clean))
 	}
 	if _, _, err := s.v.Check(clean); err != nil {
 		return "", err
@@ -82,8 +95,8 @@ func (s *Service) checkNotePath(p string) (string, error) {
 	return clean, nil
 }
 
-func etagConflict(n *vault.Note) *Error {
-	return E(CodeConflict, "%s changed since the etag was obtained; merge your change into the current content", n.Path).
+func (s *Service) etagConflict(n *vault.Note) *Error {
+	return E(CodeConflict, "%s changed since the etag was obtained; merge your change into the current content", s.out(n.Path)).
 		With("etag", n.ETag).With("content", string(n.Content))
 }
 
@@ -96,13 +109,17 @@ func frontmatterWarnings(content []byte) []string {
 
 // CreateNote creates a note.
 func (s *Service) CreateNote(ctx context.Context, path, content string, frontmatter map[string]any, overwrite bool, summary string) (*WriteResult, error) {
+	rel, err := s.writable(ctx, path)
+	if err != nil {
+		return nil, err
+	}
 	return s.mutate(ctx, func() (*mutation, error) {
-		clean, err := s.checkNotePath(path)
+		clean, err := s.checkNotePath(rel)
 		if err != nil {
 			return nil, err
 		}
 		if s.v.Exists(clean) && !overwrite {
-			return nil, E(CodeAlreadyExists, "%s already exists", clean)
+			return nil, E(CodeAlreadyExists, "%s already exists", s.out(clean))
 		}
 		data := []byte(content)
 		var warnings []string
@@ -126,14 +143,18 @@ func (s *Service) CreateNote(ctx context.Context, path, content string, frontmat
 			return nil, err
 		}
 		return &mutation{subject: "kb_create_note: " + clean, summary: summary, paths: []string{clean},
-			result: &WriteResult{Path: clean, ETag: vault.ETagOf(data), Warnings: warnings}}, nil
+			result: &WriteResult{Path: s.out(clean), ETag: vault.ETagOf(data), Warnings: warnings}}, nil
 	})
 }
 
 // ReplaceNote replaces a note's content.
 func (s *Service) ReplaceNote(ctx context.Context, path, content, etag, summary string) (*WriteResult, error) {
+	rel, err := s.writable(ctx, path)
+	if err != nil {
+		return nil, err
+	}
 	return s.mutate(ctx, func() (*mutation, error) {
-		clean, err := s.checkNotePath(path)
+		clean, err := s.checkNotePath(rel)
 		if err != nil {
 			return nil, err
 		}
@@ -142,7 +163,7 @@ func (s *Service) ReplaceNote(ctx context.Context, path, content, etag, summary 
 			return nil, err
 		}
 		if etag != "" && etag != n.ETag {
-			return nil, etagConflict(n)
+			return nil, s.etagConflict(n)
 		}
 		data := []byte(content)
 		if err := s.v.WriteAtomic(clean, data); err != nil {
@@ -153,7 +174,7 @@ func (s *Service) ReplaceNote(ctx context.Context, path, content, etag, summary 
 			warnings = append(warnings, CodeMarkersPresent+": the content still contains conflict markers")
 		}
 		return &mutation{subject: "kb_replace_note: " + clean, summary: summary, paths: []string{clean},
-			result: &WriteResult{Path: clean, ETag: vault.ETagOf(data), Warnings: warnings}}, nil
+			result: &WriteResult{Path: s.out(clean), ETag: vault.ETagOf(data), Warnings: warnings}}, nil
 	})
 }
 
@@ -171,8 +192,12 @@ type PatchOp struct {
 
 // PatchNote applies operations atomically.
 func (s *Service) PatchNote(ctx context.Context, path string, ops []PatchOp, etag, summary string) (*WriteResult, error) {
+	rel, err := s.writable(ctx, path)
+	if err != nil {
+		return nil, err
+	}
 	return s.mutate(ctx, func() (*mutation, error) {
-		clean, err := s.checkNotePath(path)
+		clean, err := s.checkNotePath(rel)
 		if err != nil {
 			return nil, err
 		}
@@ -181,7 +206,7 @@ func (s *Service) PatchNote(ctx context.Context, path string, ops []PatchOp, eta
 			return nil, err
 		}
 		if etag != "" && etag != n.ETag {
-			return nil, etagConflict(n)
+			return nil, s.etagConflict(n)
 		}
 		if len(ops) == 0 {
 			return nil, E(CodeInvalidArgument, "operations must not be empty")
@@ -249,7 +274,7 @@ func (s *Service) PatchNote(ctx context.Context, path string, ops []PatchOp, eta
 			return nil, err
 		}
 		return &mutation{subject: "kb_patch_note: " + clean, summary: summary, paths: []string{clean},
-			result: &WriteResult{Path: clean, ETag: vault.ETagOf(data)}}, nil
+			result: &WriteResult{Path: s.out(clean), ETag: vault.ETagOf(data)}}, nil
 	})
 }
 
@@ -263,12 +288,35 @@ func appendText(body []byte, eol, text string) []byte {
 
 // MoveNote renames a note or attachment without touching other notes.
 func (s *Service) MoveNote(ctx context.Context, from, to, summary string) (*WriteResult, error) {
+	if s.ReadOnly() {
+		return nil, E(CodeReadOnly, "the server runs in read-only mode")
+	}
+	srcRel, err := s.in(from)
+	if err != nil {
+		return nil, s.wrap(err)
+	}
+	dstRel, err := s.in(to)
+	if err != nil {
+		return nil, s.wrap(err)
+	}
+	// Both ends must exist for the caller before either is judged writable,
+	// so a hidden end never answers differently from a missing one.
+	for _, rel := range []string{srcRel, dstRel} {
+		if err := s.guardRead(ctx, rel); err != nil {
+			return nil, err
+		}
+	}
+	for _, rel := range []string{srcRel, dstRel} {
+		if err := s.guardWrite(ctx, rel); err != nil {
+			return nil, err
+		}
+	}
 	return s.mutate(ctx, func() (*mutation, error) {
-		src, err := s.checkFilePath(from)
+		src, err := s.checkFilePath(srcRel)
 		if err != nil {
 			return nil, err
 		}
-		dst, err := s.checkFilePath(to)
+		dst, err := s.checkFilePath(dstRel)
 		if err != nil {
 			return nil, err
 		}
@@ -276,15 +324,18 @@ func (s *Service) MoveNote(ctx context.Context, from, to, summary string) (*Writ
 			return nil, E(CodeInvalidPath, "cannot change a file between note (.md) and attachment when moving")
 		}
 		if !s.v.Exists(src) {
-			return nil, E(CodeNotFound, "%s", src)
+			return nil, s.notFound(src)
 		}
 		if s.v.Exists(dst) {
-			return nil, E(CodeAlreadyExists, "%s already exists", dst)
+			return nil, E(CodeAlreadyExists, "%s already exists", s.out(dst))
 		}
 		refs := []string{}
 		for _, b := range s.cat.Backlinks(src) {
-			if len(refs) == 0 || refs[len(refs)-1] != b.Source {
-				refs = append(refs, b.Source)
+			if !s.canRead(ctx, b.Source) {
+				continue
+			}
+			if ref := s.out(b.Source); len(refs) == 0 || refs[len(refs)-1] != ref {
+				refs = append(refs, ref)
 			}
 		}
 		if err := s.v.Rename(src, dst); err != nil {
@@ -292,14 +343,18 @@ func (s *Service) MoveNote(ctx context.Context, from, to, summary string) (*Writ
 		}
 		data, _, _ := s.v.Read(dst)
 		return &mutation{subject: fmt.Sprintf("kb_move_note: %s -> %s", src, dst), summary: summary, paths: []string{src, dst},
-			result: &WriteResult{Path: dst, ETag: vault.ETagOf(data), ReferencingNotes: refs}}, nil
+			result: &WriteResult{Path: s.out(dst), ETag: vault.ETagOf(data), ReferencingNotes: refs}}, nil
 	})
 }
 
 // DeleteNote removes a note or attachment permanently (Git keeps the history).
 func (s *Service) DeleteNote(ctx context.Context, path, etag, summary string) (*WriteResult, error) {
+	rel, err := s.writable(ctx, path)
+	if err != nil {
+		return nil, err
+	}
 	return s.mutate(ctx, func() (*mutation, error) {
-		clean, err := s.checkFilePath(path)
+		clean, err := s.checkFilePath(rel)
 		if err != nil {
 			return nil, err
 		}
@@ -308,20 +363,24 @@ func (s *Service) DeleteNote(ctx context.Context, path, etag, summary string) (*
 			return nil, err
 		}
 		if etag != "" && etag != vault.ETagOf(data) {
-			return nil, E(CodeConflict, "%s changed since the etag was obtained", clean).With("etag", vault.ETagOf(data))
+			return nil, E(CodeConflict, "%s changed since the etag was obtained", s.out(clean)).With("etag", vault.ETagOf(data))
 		}
 		if err := s.v.Remove(clean); err != nil {
 			return nil, err
 		}
 		return &mutation{subject: "kb_delete_note: " + clean, summary: summary, paths: []string{clean},
-			result: &WriteResult{Path: clean}}, nil
+			result: &WriteResult{Path: s.out(clean)}}, nil
 	})
 }
 
 // Restore writes the content of path at revision as a new commit.
 func (s *Service) Restore(ctx context.Context, path, revision, summary string) (*WriteResult, error) {
+	rel, err := s.writable(ctx, path)
+	if err != nil {
+		return nil, err
+	}
 	return s.mutate(ctx, func() (*mutation, error) {
-		clean, err := s.checkNotePath(path)
+		clean, err := s.checkNotePath(rel)
 		if err != nil {
 			return nil, err
 		}
@@ -331,12 +390,12 @@ func (s *Service) Restore(ctx context.Context, path, revision, summary string) (
 		}
 		data, err := s.repo.Show(ctx, hash, clean)
 		if err != nil {
-			return nil, err
+			return nil, E(CodeNotFound, "not_found: %s at %s", s.out(clean), hash)
 		}
 		if err := s.v.WriteAtomic(clean, data); err != nil {
 			return nil, err
 		}
 		return &mutation{subject: fmt.Sprintf("kb_restore: %s (from %s)", clean, hash[:12]), summary: summary, paths: []string{clean},
-			result: &WriteResult{Path: clean, ETag: vault.ETagOf(data)}}, nil
+			result: &WriteResult{Path: s.out(clean), ETag: vault.ETagOf(data)}}, nil
 	})
 }

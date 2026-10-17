@@ -36,14 +36,30 @@ Settings come from three layers, each overriding the previous one:
 
 Run `knowledge-base-mcp -check` to validate the configuration and the clone without serving.
 
+## Multi-user mode
+
+Setting `KB_ADMIN_EMAIL` together with `KB_HTTP_LISTEN` switches the HTTP transport to multi-user mode: accounts that sign in with a code sent by email, several repositories and folder-level access rules. Without it nothing changes, and stdio always serves one local vault. See [multi-user.md](multi-user.md) for the whole picture.
+
+| Env var | YAML key | Default | Meaning |
+|---|---|---|---|
+| `KB_ADMIN_EMAIL` | `server.accounts.admin_email` | — | Address of the administrator account. Enables multi-user mode. |
+| `KB_RESEND_API_KEY` | — | — (required) | API key of the mail provider ([Resend](https://resend.com)) used to deliver sign-in codes. Use a key with sending access only. Environment only; never logged. |
+| `KB_MAIL_FROM` | `server.accounts.mail_from` | — (required) | Sender of sign-in emails, e.g. `KB <login@mail.example.com>`. The domain must be verified with the mail provider. |
+| `KB_SECRET_KEY` | — | — (required) | Base64 of 32 random bytes (`openssl rand -base64 32`) used to encrypt repository tokens and SSH keys at rest. Environment only; never logged or stored. |
+| `KB_DATA_DIR` | `server.data_dir` | = index dir | Where the state file and the repositories added in the admin panel live. |
+| `KB_VAULT_ALIAS` | `vault.alias` | `main` | Alias under which the vault from `KB_VAULT_PATH` / `KB_GIT_REMOTE` is imported as the first repository. |
+| `KB_SSH_KNOWN_HOSTS` | `git.ssh_known_hosts` | — | `known_hosts` lines. When set, SSH repositories trust only these hosts; otherwise host keys are pinned on first contact. |
+
+In multi-user mode `KB_VAULT_PATH` becomes optional (the server may start with no repository), `KB_HTTP_TOKEN` becomes optional and acts as a recovery token of the administrator account, and `KB_OAUTH_PASSWORD` is ignored. The server refuses to start, naming the setting, when one of the required values is missing or malformed.
+
 ## Error codes
 
 Every tool failure is a tool error whose JSON payload has a stable `code` and a `message`:
 
 | Code | Meaning |
 |---|---|
-| `invalid_path` | Absolute path, `..` segment, symlink escape, or a note path without `.md`. |
-| `not_found` | Missing or excluded path, unknown revision, missing heading. |
+| `invalid_path` | Absolute path, `..` segment, symlink escape, or a note path without `.md`. In multi-user mode also a file path without a repository alias in front. |
+| `not_found` | Missing or excluded path, unknown revision, missing heading. In multi-user mode also every path the account may not read, and an unknown repository alias: hidden and missing are reported alike. |
 | `already_exists` | Create/move target exists. |
 | `unsupported_file` | Write attempted on a non-Markdown file. |
 | `conflict` | The `etag` is stale; the payload carries the current `content` and `etag`. |
@@ -51,6 +67,7 @@ Every tool failure is a tool error whose JSON payload has a stable `code` and a 
 | `conflict_markers_present` | A resolution still contains `<<<<<<<` markers. |
 | `patch_failed` | A patch operation could not be applied; nothing was written. |
 | `read_only` | The server runs in read-only mode. |
-| `invalid_argument` | Bad glob, regex, date, query or operation; signed links requested without a public URL. |
+| `forbidden` | Multi-user mode: a write to a folder the account may only read, a merge resolution without write access to every conflicting path, or `kb_reindex` by an account other than the administrator. |
+| `invalid_argument` | Bad glob, regex, date, query or operation; signed links requested without a public URL. In multi-user mode also a move between repositories, and a history tool called without a folder when several repositories are available. |
 | `too_large` | File above `max_bytes` (`kb_get_file`) or above `KB_MAX_UPLOAD`. |
 | `no_remote` / `not_in_conflict` | `kb_sync_now` without a remote; `kb_resolve_conflict` without a frozen merge. |

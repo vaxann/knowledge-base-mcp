@@ -3,10 +3,16 @@
 // OAuth for remote connectors, can sign in with a password and obtain bearer
 // tokens. It implements RFC 8414 / RFC 9728 metadata, RFC 7591 dynamic client
 // registration, the authorization code grant with PKCE (S256) and refresh
-// token rotation. There is one user: whoever knows the password.
+// token rotation.
+//
+// The sign-in step comes in two forms. A classic server has one user:
+// whoever knows the password. A multi-user server signs a person in with a
+// one-time code sent to their email address, and every token it issues
+// belongs to that person's account.
 package oauth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -19,11 +25,14 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/auth"
+
+	"github.com/vaxann/knowledge-base-mcp/internal/signin"
+	"github.com/vaxann/knowledge-base-mcp/internal/store"
 )
 
 // Config configures the authorization server.
@@ -36,10 +45,19 @@ type Config struct {
 	// StaticToken, when set, is accepted as a bearer token too (for scripts).
 	StaticToken string
 	// StatePath is the JSON file that keeps clients and tokens across restarts.
-	StatePath  string
-	AccessTTL  time.Duration
-	RefreshTTL time.Duration
-	Logger     *slog.Logger
+	// Storage, when set, is used instead.
+	StatePath string
+	Storage   Storage
+	// SignIn switches the sign-in page from the password to an emailed
+	// one-time code and makes every token belong to an account. Accounts
+	// must be set with it.
+	SignIn   *signin.Flow
+	Accounts *store.Store
+	// FailureDelay slows down wrong passwords and wrong codes (default 1s).
+	FailureDelay time.Duration
+	AccessTTL    time.Duration
+	RefreshTTL   time.Duration
+	Logger       *slog.Logger
 }
 
 type client struct {
@@ -55,6 +73,8 @@ type tokenRec struct {
 	ClientID  string    `json:"client_id"`
 	Scope     string    `json:"scope,omitempty"`
 	ExpiresAt time.Time `json:"expires_at"`
+	// AccountID is the account the token acts as (multi-user servers only).
+	AccountID string `json:"account_id,omitempty"`
 	// Pair links an access token to the refresh token that issued it.
 	Pair string `json:"pair,omitempty"`
 }
@@ -73,11 +93,15 @@ type pendingAuth struct {
 	CodeChallenge string
 	Resource      string
 	Expires       time.Time
+	// Email is the address typed on the sign-in page, kept only to show it
+	// again on the code page.
+	Email string
 }
 
 type authCode struct {
 	pendingAuth
-	Used bool
+	Used      bool
+	AccountID string
 }
 
 // Server is the authorization server.
@@ -90,10 +114,19 @@ type Server struct {
 	code map[string]*authCode    // code -> grant
 }
 
-// New loads (or creates) the state file.
+// New loads (or creates) the stored state.
 func New(cfg Config) (*Server, error) {
-	if cfg.Password == "" {
+	if cfg.SignIn == nil && cfg.Password == "" {
 		return nil, errors.New("oauth: a sign-in password is required (KB_OAUTH_PASSWORD or KB_HTTP_TOKEN)")
+	}
+	if cfg.SignIn != nil && cfg.Accounts == nil {
+		return nil, errors.New("oauth: email sign-in needs the account store")
+	}
+	if cfg.Storage == nil && cfg.StatePath != "" {
+		cfg.Storage = FileStorage(cfg.StatePath)
+	}
+	if cfg.FailureDelay == 0 {
+		cfg.FailureDelay = time.Second
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -106,18 +139,36 @@ func New(cfg Config) (*Server, error) {
 	}
 	s := &Server{cfg: cfg, log: cfg.Logger, pend: map[string]*pendingAuth{}, code: map[string]*authCode{},
 		st: state{Clients: map[string]*client{}, Access: map[string]*tokenRec{}, Refresh: map[string]*tokenRec{}}}
-	if cfg.StatePath != "" {
-		if data, err := os.ReadFile(cfg.StatePath); err == nil {
-			if err := json.Unmarshal(data, &s.st); err != nil {
-				return nil, fmt.Errorf("oauth: parse %s: %w", cfg.StatePath, err)
-			}
-			s.gc()
-		} else if !errors.Is(err, os.ErrNotExist) {
+	if cfg.Storage != nil {
+		data, err := cfg.Storage.Load()
+		if err != nil {
 			return nil, err
+		}
+		if len(data) > 0 {
+			if err := json.Unmarshal(data, &s.st); err != nil {
+				return nil, fmt.Errorf("oauth: parse stored state: %w", err)
+			}
+			s.st.normalise()
+			s.gc()
 		}
 	}
 	return s, nil
 }
+
+func (st *state) normalise() {
+	if st.Clients == nil {
+		st.Clients = map[string]*client{}
+	}
+	if st.Access == nil {
+		st.Access = map[string]*tokenRec{}
+	}
+	if st.Refresh == nil {
+		st.Refresh = map[string]*tokenRec{}
+	}
+}
+
+// multi reports whether tokens belong to accounts.
+func (s *Server) multi() bool { return s.cfg.SignIn != nil }
 
 // ---- helpers ----
 
@@ -159,7 +210,7 @@ func (s *Server) baseURL(r *http.Request) string {
 
 // save persists the state; caller holds s.mu.
 func (s *Server) save() {
-	if s.cfg.StatePath == "" {
+	if s.cfg.Storage == nil {
 		return
 	}
 	data, err := json.MarshalIndent(s.st, "", "  ")
@@ -167,14 +218,9 @@ func (s *Server) save() {
 		s.log.Error("oauth: marshal state", "err", err)
 		return
 	}
-	tmp := s.cfg.StatePath + ".tmp"
-	if err := os.MkdirAll(filepath.Dir(tmp), 0o755); err == nil {
-		if err := os.WriteFile(tmp, data, 0o600); err == nil {
-			_ = os.Rename(tmp, s.cfg.StatePath)
-			return
-		}
+	if err := s.cfg.Storage.Save(data); err != nil {
+		s.log.Error("oauth: cannot persist state", "err", err)
 	}
-	s.log.Error("oauth: cannot persist state", "path", s.cfg.StatePath)
 }
 
 // gc drops expired tokens; caller holds s.mu.
@@ -342,21 +388,36 @@ var signInTmpl = template.Must(template.New("signin").Parse(`<!doctype html>
 body{font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0}
 form{background:#1c1c1c;padding:2rem;border-radius:12px;width:min(360px,90vw);box-shadow:0 8px 30px #0008}
 h1{font-size:1.1rem;margin:0 0 .5rem}p{color:#aaa;font-size:.9rem;margin:.25rem 0 1rem}
-input[type=password]{width:100%;padding:.7rem;border-radius:8px;border:1px solid #444;background:#111;color:#eee;font-size:1rem;box-sizing:border-box}
+input[type=password],input[type=email],input[type=text]{width:100%;padding:.7rem;border-radius:8px;border:1px solid #444;background:#111;color:#eee;font-size:1rem;box-sizing:border-box}
+input.code{font-family:ui-monospace,monospace;font-size:1.5rem;letter-spacing:.4rem;text-align:center}
 button{margin-top:1rem;width:100%;padding:.7rem;border:0;border-radius:8px;background:#4f7cff;color:#fff;font-size:1rem;cursor:pointer}
+button.link{background:none;color:#8aa4ff;font-size:.9rem;margin-top:.5rem;padding:.3rem}
 .err{color:#ff6b6b;font-size:.9rem;margin-top:.5rem}
 </style></head><body>
 <form method="post" action="{{.Action}}">
 <h1>knowledge-base-mcp</h1>
 <p><b>{{.Client}}</b> asks for access to your knowledge base.<br>It will be redirected to <code>{{.RedirectHost}}</code>.</p>
 <input type="hidden" name="req_id" value="{{.ReqID}}">
-<input type="password" name="password" placeholder="Password" autofocus autocomplete="current-password" required>
+{{if eq .Step "password"}}<input type="password" name="password" placeholder="Password" autofocus autocomplete="current-password" required>
 {{if .Error}}<div class="err">{{.Error}}</div>{{end}}
 <button type="submit">Allow access</button>
+{{else if eq .Step "email"}}<input type="hidden" name="step" value="email">
+<input type="email" name="email" placeholder="Email address" autofocus autocomplete="email" required>
+{{if .Error}}<div class="err">{{.Error}}</div>{{end}}
+<button type="submit">Send me a code</button>
+{{else}}<input type="hidden" name="step" value="code">
+<p>If <b>{{.Email}}</b> has an account here, a 6-digit code is on its way. It is valid for 10 minutes.</p>
+<input class="code" type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" autofocus autocomplete="one-time-code" required>
+{{if .Error}}<div class="err">{{.Error}}</div>{{end}}
+<button type="submit">Allow access</button>
+<button class="link" type="submit" name="step" value="restart" formnovalidate>Use another address or send a new code</button>
+{{end}}
 </form></body></html>`))
 
 type signInView struct {
 	Action, Client, RedirectHost, ReqID, Error string
+	// Step is password, email or code.
+	Step, Email string
 }
 
 func (s *Server) handleAuthorizeGet(w http.ResponseWriter, r *http.Request) {
@@ -408,10 +469,14 @@ func (s *Server) handleAuthorizeGet(w http.ResponseWriter, r *http.Request) {
 	s.gc()
 	s.pend[id] = p
 	s.mu.Unlock()
-	s.render(w, c, p, id, "")
+	step := "password"
+	if s.multi() {
+		step = "email"
+	}
+	s.render(w, c, p, id, step, "")
 }
 
-func (s *Server) render(w http.ResponseWriter, c *client, p *pendingAuth, reqID, errMsg string) {
+func (s *Server) render(w http.ResponseWriter, c *client, p *pendingAuth, reqID, step, errMsg string) {
 	host := p.RedirectURI
 	if u, err := url.Parse(p.RedirectURI); err == nil {
 		host = u.Host
@@ -423,7 +488,8 @@ func (s *Server) render(w http.ResponseWriter, c *client, p *pendingAuth, reqID,
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Frame-Options", "DENY")
-	_ = signInTmpl.Execute(w, signInView{Action: "/oauth/authorize", Client: name, RedirectHost: host, ReqID: reqID, Error: errMsg})
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'")
+	_ = signInTmpl.Execute(w, signInView{Action: "/oauth/authorize", Client: name, RedirectHost: host, ReqID: reqID, Error: errMsg, Step: step, Email: p.Email})
 }
 
 func (s *Server) handleAuthorizePost(w http.ResponseWriter, r *http.Request) {
@@ -443,17 +509,47 @@ func (s *Server) handleAuthorizePost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this sign-in request has expired; start again from the client", http.StatusBadRequest)
 		return
 	}
-	if !constantEq(r.PostForm.Get("password"), s.cfg.Password) {
-		time.Sleep(time.Second) // slow down guessing
+	accountID := ""
+	if s.multi() {
+		switch r.PostForm.Get("step") {
+		case "email":
+			email := strings.TrimSpace(r.PostForm.Get("email"))
+			if len(email) > 254 {
+				email = email[:254]
+			}
+			s.mu.Lock()
+			p.Email = email
+			s.mu.Unlock()
+			// Nothing here depends on whether the address has an account:
+			// the page that follows is the same in every case.
+			s.cfg.SignIn.Request(id, email, signin.ClientAddr(r))
+			s.render(w, c, p, id, "code", "")
+			return
+		case "code":
+			acc, ok := s.cfg.SignIn.Verify(id, r.PostForm.Get("code"))
+			if !ok {
+				time.Sleep(s.cfg.FailureDelay) // slow down guessing
+				s.log.Warn("oauth: sign-in code rejected", "client", c.Name)
+				w.WriteHeader(http.StatusUnauthorized)
+				s.render(w, c, p, id, "code", "That code is not valid. Check it, or request a new one.")
+				return
+			}
+			accountID = acc.ID
+		default:
+			s.render(w, c, p, id, "email", "")
+			return
+		}
+	} else if !constantEq(r.PostForm.Get("password"), s.cfg.Password) {
+		time.Sleep(s.cfg.FailureDelay) // slow down guessing
 		s.log.Warn("oauth: wrong password", "client", c.Name)
 		w.WriteHeader(http.StatusUnauthorized)
-		s.render(w, c, p, id, "Wrong password.")
+		s.render(w, c, p, id, "password", "Wrong password.")
 		return
 	}
 	code := randomToken("kbcode_")
 	s.mu.Lock()
 	delete(s.pend, id)
-	s.code[code] = &authCode{pendingAuth: *p}
+	s.code[code] = &authCode{pendingAuth: *p, AccountID: accountID}
 	s.code[code].Expires = time.Now().Add(5 * time.Minute)
 	s.mu.Unlock()
 	u, _ := url.Parse(p.RedirectURI)
@@ -529,13 +625,16 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 			oauthError(w, 400, "invalid_grant", "PKCE verification failed")
 			return
 		}
-		s.issue(w, c, ac.Scope, "")
+		s.issue(w, c, ac.Scope, ac.AccountID)
 	case "refresh_token":
 		rt := r.PostForm.Get("refresh_token")
 		h := hashOf(rt)
 		s.mu.Lock()
 		rec := s.st.Refresh[h]
 		if rec != nil && (rec.ClientID != c.ID || time.Now().After(rec.ExpiresAt)) {
+			rec = nil
+		}
+		if rec != nil && s.multi() && !s.accountActive(rec.AccountID) {
 			rec = nil
 		}
 		if rec != nil {
@@ -551,13 +650,13 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 			oauthError(w, 400, "invalid_grant", "unknown or expired refresh token")
 			return
 		}
-		s.issue(w, c, rec.Scope, "")
+		s.issue(w, c, rec.Scope, rec.AccountID)
 	default:
 		oauthError(w, 400, "unsupported_grant_type", "use authorization_code or refresh_token")
 	}
 }
 
-func (s *Server) issue(w http.ResponseWriter, c *client, scope, _ string) {
+func (s *Server) issue(w http.ResponseWriter, c *client, scope, accountID string) {
 	if scope == "" {
 		scope = "kb"
 	}
@@ -565,8 +664,8 @@ func (s *Server) issue(w http.ResponseWriter, c *client, scope, _ string) {
 	now := time.Now()
 	rh := hashOf(refresh)
 	s.mu.Lock()
-	s.st.Refresh[rh] = &tokenRec{ClientID: c.ID, Scope: scope, ExpiresAt: now.Add(s.cfg.RefreshTTL)}
-	s.st.Access[hashOf(access)] = &tokenRec{ClientID: c.ID, Scope: scope, ExpiresAt: now.Add(s.cfg.AccessTTL), Pair: rh}
+	s.st.Refresh[rh] = &tokenRec{ClientID: c.ID, Scope: scope, ExpiresAt: now.Add(s.cfg.RefreshTTL), AccountID: accountID}
+	s.st.Access[hashOf(access)] = &tokenRec{ClientID: c.ID, Scope: scope, ExpiresAt: now.Add(s.cfg.AccessTTL), Pair: rh, AccountID: accountID}
 	s.save()
 	s.mu.Unlock()
 	writeJSON(w, 200, map[string]any{
@@ -577,24 +676,105 @@ func (s *Server) issue(w http.ResponseWriter, c *client, scope, _ string) {
 
 // ---- resource protection ----
 
-// Valid reports whether a bearer token grants access.
-func (s *Server) Valid(token string) bool {
-	if token == "" {
+// accountActive reports whether an account exists and is not disabled.
+func (s *Server) accountActive(id string) bool {
+	if id == "" {
 		return false
 	}
+	a := s.cfg.Accounts.Snapshot().Accounts[id]
+	return a != nil && !a.Disabled
+}
+
+// adminAccount returns the id of the administrator account.
+func (s *Server) adminAccount() string {
+	for _, a := range s.cfg.Accounts.Snapshot().Accounts {
+		if a.Admin && !a.Disabled {
+			return a.ID
+		}
+	}
+	return ""
+}
+
+// Verify checks a bearer token. On a multi-user server it also returns the
+// account the token acts as: the static token acts as the administrator, an
+// OAuth token as the account that signed in, provided it is still active.
+func (s *Server) Verify(token string) (accountID string, expires time.Time, ok bool) {
+	if token == "" {
+		return "", time.Time{}, false
+	}
 	if s.cfg.StaticToken != "" && constantEq(token, s.cfg.StaticToken) {
-		return true
+		exp := time.Now().Add(24 * time.Hour)
+		if !s.multi() {
+			return "", exp, true
+		}
+		id := s.adminAccount()
+		return id, exp, id != ""
+	}
+	s.mu.Lock()
+	rec := s.st.Access[hashOf(token)]
+	s.mu.Unlock()
+	if rec == nil || !time.Now().Before(rec.ExpiresAt) {
+		return "", time.Time{}, false
+	}
+	if s.multi() && !s.accountActive(rec.AccountID) {
+		// Also rejects tokens issued before the switch to multi-user mode,
+		// which belong to nobody.
+		return "", time.Time{}, false
+	}
+	return rec.AccountID, rec.ExpiresAt, true
+}
+
+// Valid reports whether a bearer token grants access.
+func (s *Server) Valid(token string) bool {
+	_, _, ok := s.Verify(token)
+	return ok
+}
+
+// RevokeAccount deletes every token of an account and returns how many
+// sessions (refresh tokens) that ended.
+func (s *Server) RevokeAccount(accountID string) int {
+	if accountID == "" {
+		return 0
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rec := s.st.Access[hashOf(token)]
-	return rec != nil && time.Now().Before(rec.ExpiresAt)
+	n := 0
+	for k, t := range s.st.Refresh {
+		if t.AccountID == accountID {
+			delete(s.st.Refresh, k)
+			n++
+		}
+	}
+	for k, t := range s.st.Access {
+		if t.AccountID == accountID {
+			delete(s.st.Access, k)
+		}
+	}
+	s.save()
+	return n
+}
+
+// Sessions returns the number of live sessions (refresh tokens) per account.
+func (s *Server) Sessions() map[string]int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	out := map[string]int{}
+	for _, t := range s.st.Refresh {
+		if t.AccountID != "" && now.Before(t.ExpiresAt) {
+			out[t.AccountID]++
+		}
+	}
+	return out
 }
 
 // Middleware protects a handler with bearer tokens and advertises the
 // protected resource metadata on 401 (RFC 9728), which is how MCP clients
 // discover the sign-in flow.
 func (s *Server) Middleware(next http.Handler) http.Handler {
+	if s.multi() {
+		return s.accountMiddleware(next)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if !ok || !s.Valid(strings.TrimSpace(tok)) {
@@ -604,4 +784,32 @@ func (s *Server) Middleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// accountMiddleware is Middleware for a multi-user server. It records the
+// account in the request through the MCP SDK, which then passes it to tool
+// handlers and pins the MCP session to that account, so a session cannot be
+// continued with someone else's token.
+func (s *Server) accountMiddleware(next http.Handler) http.Handler {
+	verifier := func(_ context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
+		id, exp, ok := s.Verify(token)
+		if !ok {
+			return nil, auth.ErrInvalidToken
+		}
+		return &auth.TokenInfo{UserID: id, Expiration: exp, Scopes: []string{"kb"}}, nil
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		opts := &auth.RequireBearerTokenOptions{ResourceMetadataURL: s.baseURL(r) + "/.well-known/oauth-protected-resource"}
+		auth.RequireBearerToken(verifier, opts)(next).ServeHTTP(w, r)
+	})
+}
+
+// AccountOf returns the account a request's bearer token acts as.
+func (s *Server) AccountOf(r *http.Request) (string, bool) {
+	tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !ok {
+		return "", false
+	}
+	id, _, ok := s.Verify(strings.TrimSpace(tok))
+	return id, ok
 }

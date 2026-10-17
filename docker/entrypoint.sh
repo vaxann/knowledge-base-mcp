@@ -9,7 +9,8 @@ KB_HOME=/home/kb
 
 if [ "$(id -u)" = "0" ]; then
   # Bind-mounted volumes may belong to another uid; make them writable for kb.
-  for d in "${KB_VAULT_PATH:-/data/vault}" "${KB_INDEX_DIR:-/data/index}"; do
+  # KB_DATA_DIR (multi-user mode) defaults to the index directory.
+  for d in "${KB_VAULT_PATH:-/data/vault}" "${KB_INDEX_DIR:-/data/index}" "${KB_DATA_DIR:-${KB_INDEX_DIR:-/data/index}}"; do
     mkdir -p "$d"
     if [ "$(stat -c %u "$d")" != "$(id -u $KB_USER)" ]; then
       chown -R $KB_USER:$KB_USER "$d"

@@ -47,13 +47,13 @@ const defaultInlineLimit = 10 << 20
 
 func (s *Server) registerFileTools() {
 	ro := toolOpts{readOnly: true, idempotent: true}
-	addToolRaw(s, "kb_get_file", "Return any vault file (PDF, image, Office document, ...) as an embedded binary resource plus metadata. Large files are refused with too_large: use kb_file_link for those.", ro,
+	addToolRaw(s, "kb_get_file", s.desc("Return any vault file (PDF, image, Office document, ...) as an embedded binary resource plus metadata. Large files are refused with too_large: use kb_file_link for those."), ro,
 		func(ctx context.Context, in getFileIn) (*mcp.CallToolResult, any, error) {
 			limit := in.MaxBytes
 			if limit <= 0 {
 				limit = defaultInlineLimit
 			}
-			data, info, err := s.svc.ReadFile(ctx, in.Path, limit)
+			data, info, err := s.ws.ReadFile(ctx, in.Path, limit)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -63,28 +63,28 @@ func (s *Server) registerFileTools() {
 			}}
 			return res, info, nil
 		})
-	addTool(s, "kb_file_link", "Create a temporary signed HTTPS link to download a vault file in a browser, without signing in. Give it to the user to open or save PDFs and other attachments.", ro,
+	addTool(s, "kb_file_link", s.desc("Create a temporary signed HTTPS link to download a vault file in a browser, without signing in. Give it to the user to open or save PDFs and other attachments."), ro,
 		func(ctx context.Context, in fileLinkIn) (any, error) {
-			link, exp, err := s.svc.SignedLink(s.publicURL(), "get", in.Path, time.Duration(in.TTLMinutes)*time.Minute)
+			link, exp, err := s.ws.SignedLink(ctx, s.publicURL(), "get", in.Path, time.Duration(in.TTLMinutes)*time.Minute)
 			if err != nil {
 				return nil, err
 			}
 			return map[string]any{"url": link, "expires_at": exp, "path": in.Path}, nil
 		})
-	if s.svc.ReadOnly() {
+	if s.ws.ReadOnly() {
 		return
 	}
-	addTool(s, "kb_upload_file", "Store a binary or text file in the vault from base64 content (one commit). For files the user has on their device, prefer kb_upload_link so they can upload in the browser.", toolOpts{},
+	addTool(s, "kb_upload_file", s.desc("Store a binary or text file in the vault from base64 content (one commit). For files the user has on their device, prefer kb_upload_link so they can upload in the browser."), toolOpts{},
 		func(ctx context.Context, in uploadFileIn) (any, error) {
 			data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(in.ContentBase64))
 			if err != nil {
 				return nil, kb.E(kb.CodeInvalidArgument, "content_base64 is not valid base64: %s", err)
 			}
-			return s.svc.PutFile(ctx, in.Path, data, in.Overwrite, in.Summary)
+			return s.ws.PutFile(ctx, in.Path, data, in.Overwrite, in.Summary)
 		})
-	addTool(s, "kb_upload_link", "Create a temporary signed HTTPS upload page so the user can add a file (PDF, photo, document) to the vault from their browser or phone; the upload is committed automatically. Use a folder path ending with / to keep the file's own name.", toolOpts{},
+	addTool(s, "kb_upload_link", s.desc("Create a temporary signed HTTPS upload page so the user can add a file (PDF, photo, document) to the vault from their browser or phone; the upload is committed automatically. Use a folder path ending with / to keep the file's own name."), toolOpts{},
 		func(ctx context.Context, in uploadLinkIn) (any, error) {
-			link, exp, err := s.svc.SignedLink(s.publicURL(), "put", in.Path, time.Duration(in.TTLMinutes)*time.Minute)
+			link, exp, err := s.ws.SignedLink(ctx, s.publicURL(), "put", in.Path, time.Duration(in.TTLMinutes)*time.Minute)
 			if err != nil {
 				return nil, err
 			}
@@ -97,8 +97,9 @@ func (s *Server) registerFileTools() {
 func addToolRaw[In any](s *Server, name, desc string, o toolOpts, h func(ctx context.Context, in In) (*mcp.CallToolResult, any, error)) {
 	f := false
 	t := &mcp.Tool{Name: name, Description: desc, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: o.readOnly, IdempotentHint: o.idempotent, OpenWorldHint: &f}}
+	s.tools = append(s.tools, name)
 	mcp.AddTool(s.mcp, t, func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
-		res, out, err := h(clientCtx(ctx, req), in)
+		res, out, err := h(s.callerCtx(clientCtx(ctx, req), req.Extra), in)
 		if err != nil {
 			r, payload := errorResult(err)
 			return r, payload, nil
@@ -146,22 +147,24 @@ type uploadView struct {
 }
 
 // fileRoutes mounts the file endpoints. authed reports whether the request
-// carries a valid bearer/OAuth token; signed links work without one.
-func (s *Server) fileRoutes(mux *http.ServeMux, authed func(*http.Request) bool) {
-	allowed := func(r *http.Request, kind, signedPath string) bool {
-		if authed(r) {
-			return true
+// carries a valid bearer/OAuth token; signed links work without one. Either
+// way the returned context acts as an account on a multi-user server: the
+// token's, or the one the link was issued to.
+func (s *Server) fileRoutes(mux *http.ServeMux, authed func(*http.Request) (context.Context, bool)) {
+	allowed := func(r *http.Request, kind, signedPath string) (context.Context, bool) {
+		if ctx, ok := authed(r); ok {
+			return ctx, true
 		}
-		q := r.URL.Query()
-		return s.svc.VerifyLink(kind, signedPath, q.Get("exp"), q.Get("sig"))
+		return s.ws.VerifyLink(r.Context(), kind, signedPath, r.URL.Query())
 	}
 	mux.HandleFunc("GET /files/{path...}", func(w http.ResponseWriter, r *http.Request) {
 		rel := r.PathValue("path")
-		if !allowed(r, "get", rel) {
+		ctx, ok := allowed(r, "get", rel)
+		if !ok {
 			http.Error(w, "forbidden: sign in or use a valid signed link", http.StatusForbidden)
 			return
 		}
-		data, info, err := s.svc.ReadFile(r.Context(), rel, 0)
+		data, info, err := s.ws.ReadFile(ctx, rel, 0)
 		if err != nil {
 			httpErr(w, err)
 			return
@@ -182,7 +185,11 @@ func (s *Server) fileRoutes(mux *http.ServeMux, authed func(*http.Request) bool)
 	})
 	mux.HandleFunc("PUT /files/{path...}", func(w http.ResponseWriter, r *http.Request) {
 		rel := r.PathValue("path")
-		if !allowed(r, "put", rel) && !allowed(r, "put", path.Dir(rel)+"/") {
+		ctx, ok := allowed(r, "put", rel)
+		if !ok {
+			ctx, ok = allowed(r, "put", path.Dir(rel)+"/")
+		}
+		if !ok {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -191,7 +198,7 @@ func (s *Server) fileRoutes(mux *http.ServeMux, authed func(*http.Request) bool)
 			http.Error(w, "upload too large or unreadable", http.StatusRequestEntityTooLarge)
 			return
 		}
-		res, err := s.svc.PutFile(r.Context(), rel, data, r.URL.Query().Get("overwrite") != "0", r.Header.Get("X-KB-Summary"))
+		res, err := s.ws.PutFile(ctx, rel, data, r.URL.Query().Get("overwrite") != "0", r.Header.Get("X-KB-Summary"))
 		if err != nil {
 			httpErr(w, err)
 			return
@@ -203,7 +210,8 @@ func (s *Server) fileRoutes(mux *http.ServeMux, authed func(*http.Request) bool)
 	})
 	mux.HandleFunc("POST /upload/{path...}", func(w http.ResponseWriter, r *http.Request) {
 		signed := r.PathValue("path")
-		if !allowed(r, "put", signed) {
+		ctx, ok := allowed(r, "put", signed)
+		if !ok {
 			http.Error(w, "forbidden: this upload link is invalid or expired", http.StatusForbidden)
 			return
 		}
@@ -228,7 +236,7 @@ func (s *Server) fileRoutes(mux *http.ServeMux, authed func(*http.Request) bool)
 			if strings.HasSuffix(signed, "/") {
 				dest = signed + path.Base(fh.Filename)
 			}
-			if _, err := s.svc.PutFile(r.Context(), dest, data, true, "uploaded via signed link"); err != nil {
+			if _, err := s.ws.PutFile(ctx, dest, data, true, "uploaded via signed link"); err != nil {
 				s.renderUpload(w, r, "Failed: "+err.Error(), "err")
 				return
 			}
@@ -245,7 +253,7 @@ func (s *Server) fileRoutes(mux *http.ServeMux, authed func(*http.Request) bool)
 func (s *Server) renderUpload(w http.ResponseWriter, r *http.Request, msg, class string) {
 	signed := r.PathValue("path")
 	q := r.URL.Query()
-	if !s.svc.VerifyLink("put", signed, q.Get("exp"), q.Get("sig")) {
+	if _, ok := s.ws.VerifyLink(r.Context(), "put", signed, q); !ok {
 		http.Error(w, "this upload link is invalid or expired", http.StatusForbidden)
 		return
 	}
@@ -277,7 +285,7 @@ func statusOf(err error) int {
 			return http.StatusConflict
 		case kb.CodeTooLarge:
 			return http.StatusRequestEntityTooLarge
-		case kb.CodeReadOnly:
+		case kb.CodeReadOnly, kb.CodeForbidden:
 			return http.StatusForbidden
 		case kb.CodeInvalidArgument:
 			return http.StatusBadRequest

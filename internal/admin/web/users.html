@@ -1,0 +1,45 @@
+{{define "content"}}
+<h1>Accounts</h1>
+<p class="lede">An account signs in with a code sent to its address. A new account sees nothing until you grant it access to a folder.</p>
+<table class="list">
+  <thead><tr><th>Address</th><th>State</th><th>Last sign-in</th><th>Sessions</th><th>Rules</th><th><span class="sr">Actions</span></th></tr></thead>
+  <tbody>
+  {{range .Data}}
+  <tr>
+    <td data-label="Address"><a href="/admin/users/{{.ID}}">{{.Email}}</a>{{if .Admin}} <span class="tag">administrator</span>{{end}}</td>
+    <td data-label="State">{{if .Disabled}}<span class="state bad">disabled</span>{{else}}<span class="state ok">active</span>{{end}}</td>
+    <td data-label="Last sign-in">{{.LastSignIn}}</td>
+    <td data-label="Sessions">{{.Sessions}}</td>
+    <td data-label="Rules">{{.Rules}}</td>
+    <td class="actions">
+      {{if .Sessions}}
+      <form method="post" action="/admin/users/{{.ID}}/revoke"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="quiet" type="submit">End sessions</button></form>
+      {{end}}
+      {{if not .Admin}}
+      {{if .Disabled}}
+      <form method="post" action="/admin/users/{{.ID}}/enable"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="quiet" type="submit">Enable</button></form>
+      {{else}}
+      <form method="post" action="/admin/users/{{.ID}}/disable"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="quiet" type="submit">Disable</button></form>
+      {{end}}
+      <details class="confirm">
+        <summary>Delete</summary>
+        <form method="post" action="/admin/users/{{.ID}}/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <p>This deletes {{.Email}}, its rules and its sessions.</p>
+          <button class="danger" type="submit">Delete account</button>
+        </form>
+      </details>
+      {{end}}
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+
+<h2>Add an account</h2>
+<form class="inline" method="post" action="/admin/users">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <label for="new-email">Email address</label>
+  <input id="new-email" type="email" name="email" autocomplete="off" required>
+  <button type="submit">Add account</button>
+</form>
+{{end}}

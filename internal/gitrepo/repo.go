@@ -30,7 +30,14 @@ type Options struct {
 	// helper for HTTPS remotes. It is never written to disk.
 	Token    string
 	Username string
-	Logger   *slog.Logger
+	// SSHKeyFile, when set, is the private key used for SSH remotes instead
+	// of whatever the process environment provides. KnownHostsFile pins host
+	// keys; StrictHostKeys refuses hosts that are not in it, otherwise a host
+	// is recorded on first contact.
+	SSHKeyFile     string
+	KnownHostsFile string
+	StrictHostKeys bool
+	Logger         *slog.Logger
 }
 
 // Repo is a Git work tree.
@@ -70,11 +77,28 @@ func buildEnv(o Options) []string {
 		configs = append(configs, [2]string{"credential.helper", helper})
 		env = append(env, "KB_GIT_HELPER_TOKEN="+o.Token, "KB_GIT_HELPER_USER="+o.Username)
 	}
+	if o.SSHKeyFile != "" {
+		check := "accept-new"
+		if o.StrictHostKeys {
+			check = "yes"
+		}
+		cmd := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o IdentityAgent=none -o BatchMode=yes -o StrictHostKeyChecking=%s", shellQuote(o.SSHKeyFile), check)
+		if o.KnownHostsFile != "" {
+			cmd += " -o UserKnownHostsFile=" + shellQuote(o.KnownHostsFile)
+		}
+		// Later entries win, so this overrides a process-wide GIT_SSH_COMMAND.
+		env = append(env, "GIT_SSH_COMMAND="+cmd)
+	}
 	env = append(env, "GIT_CONFIG_COUNT="+strconv.Itoa(len(configs)))
 	for i, kv := range configs {
 		env = append(env, fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", i, kv[0]), fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", i, kv[1]))
 	}
 	return env
+}
+
+// shellQuote quotes a path for the shell that runs GIT_SSH_COMMAND.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // Error carries git's stderr.
@@ -382,6 +406,9 @@ type Commit struct {
 	Email   string    `json:"email,omitempty"`
 	Message string    `json:"message"`
 	Changes []Change  `json:"changes,omitempty"`
+	// Partial is set when the caller may not see everything the commit
+	// touched: the message is withheld and Changes lists visible paths only.
+	Partial bool `json:"partial,omitempty"`
 }
 
 // Change is a path touched by a commit.
@@ -549,6 +576,107 @@ func (r *Repo) Diff(ctx context.Context, from, to, path string) (string, error) 
 		args = append(args, path)
 	}
 	return r.run(ctx, args...)
+}
+
+// FullChanges returns every path changed by each of the given commits,
+// regardless of any path filter used to find them. Merge commits report the
+// union of their differences against each parent.
+func (r *Repo) FullChanges(ctx context.Context, hashes []string) (map[string][]Change, error) {
+	out := map[string][]Change{}
+	const chunk = 200
+	for len(hashes) > 0 {
+		n := min(chunk, len(hashes))
+		args := append([]string{"log", "--no-walk=unsorted", "-m", "-M", "--format=%x1e%H%x1f%aI%x1f%an%x1f%ae%x1f%x1f", "--name-status"}, hashes[:n]...)
+		hashes = hashes[n:]
+		raw, err := r.run(ctx, append(args, "--")...)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range parseLog(raw) {
+			seen := map[Change]bool{}
+			for _, ch := range out[c.Hash] {
+				seen[ch] = true
+			}
+			for _, ch := range c.Changes {
+				if !seen[ch] {
+					seen[ch] = true
+					out[c.Hash] = append(out[c.Hash], ch)
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
+// ChangedPaths lists the paths that differ between from and to (to == ""
+// means the work tree). A rename reports both names.
+func (r *Repo) ChangedPaths(ctx context.Context, from, to string) ([]string, error) {
+	if _, err := r.RevParse(ctx, from); err != nil {
+		return nil, err
+	}
+	args := []string{"diff", "--name-only", "-z", "--no-renames", from}
+	if to != "" {
+		if _, err := r.RevParse(ctx, to); err != nil {
+			return nil, err
+		}
+		args = append(args, to)
+	}
+	out, err := r.run(ctx, append(args, "--")...)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, p := range strings.Split(out, "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
+}
+
+// DiffPaths is Diff limited to the given paths. prefix, when not empty, is
+// shown in front of every path in the diff headers.
+func (r *Repo) DiffPaths(ctx context.Context, from, to string, paths []string, prefix string) (string, error) {
+	if _, err := r.RevParse(ctx, from); err != nil {
+		return "", err
+	}
+	base := []string{"diff", "--no-color"}
+	if prefix != "" {
+		base = append(base, "--src-prefix=a/"+prefix, "--dst-prefix=b/"+prefix)
+	}
+	base = append(base, from)
+	if to != "" {
+		if _, err := r.RevParse(ctx, to); err != nil {
+			return "", err
+		}
+		base = append(base, to)
+	}
+	base = append(base, "--")
+	if paths == nil {
+		return r.run(ctx, base...)
+	}
+	var b strings.Builder
+	const chunk = 500 // keeps the command line far below the system limit
+	for len(paths) > 0 {
+		n := min(chunk, len(paths))
+		args := append(append([]string(nil), base...), literalPathspecs(paths[:n])...)
+		paths = paths[n:]
+		out, err := r.run(ctx, args...)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(out)
+	}
+	return b.String(), nil
+}
+
+// literalPathspecs stops Git from reading glob characters in file names.
+func literalPathspecs(paths []string) []string {
+	out := make([]string, len(paths))
+	for i, p := range paths {
+		out[i] = ":(literal)" + p
+	}
+	return out
 }
 
 // DiffNameStatus lists paths changed between two revisions.

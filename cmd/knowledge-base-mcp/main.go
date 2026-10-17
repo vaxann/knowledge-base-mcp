@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/vaxann/knowledge-base-mcp/internal/app"
 	"github.com/vaxann/knowledge-base-mcp/internal/config"
 	"github.com/vaxann/knowledge-base-mcp/internal/kb"
 	"github.com/vaxann/knowledge-base-mcp/internal/mcpserver"
@@ -48,6 +49,13 @@ func run() int {
 	log := newLogger(cfg.Server.LogLevel)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	if cfg.Server.Accounts.AdminEmail != "" && !cfg.MultiUser() {
+		log.Warn("KB_ADMIN_EMAIL is ignored: multi-user mode needs the HTTP transport (KB_HTTP_LISTEN); serving one vault over stdio")
+	}
+	if cfg.MultiUser() {
+		return runMulti(ctx, cfg, log, *check)
+	}
 
 	svc, err := kb.Open(ctx, cfg, log, version)
 	if err != nil {
@@ -86,6 +94,35 @@ func run() int {
 		runErr = srv.Run(ctx)
 	}
 	if err := runErr; err != nil && ctx.Err() == nil {
+		log.Error("server stopped", "err", err)
+		return 1
+	}
+	return 0
+}
+
+// runMulti serves the multi-user server: accounts, several repositories and
+// access rules behind the HTTP transport.
+func runMulti(ctx context.Context, cfg config.Config, log *slog.Logger, check bool) int {
+	m, err := app.NewMulti(ctx, app.Options{Config: cfg, Log: log, Version: version})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "startup error:", err)
+		return 1
+	}
+	defer func() { _ = m.Close() }()
+	if check {
+		if err := m.Workspace.WaitReady(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, "startup error:", err)
+			return 1
+		}
+		repos := m.Workspace.Repos(ctx)
+		fmt.Fprintf(os.Stderr, "ok: multi-user mode, %d repositories\n", len(repos))
+		for _, r := range repos {
+			fmt.Fprintf(os.Stderr, "  %s: %s\n", r.Alias, r.Status)
+		}
+		return 0
+	}
+	log.Info("starting", "version", version, "mode", "multi-user", "data_dir", cfg.DataDirOrDefault(), "read_only", cfg.Server.ReadOnly)
+	if err := m.Run(ctx); err != nil && ctx.Err() == nil {
 		log.Error("server stopped", "err", err)
 		return 1
 	}

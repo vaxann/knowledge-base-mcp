@@ -1,0 +1,45 @@
+{{define "content"}}
+{{with .Data}}
+<p class="back"><a href="/admin/repos/{{.Alias}}">Repository {{.Alias}}</a></p>
+<h1 class="path" aria-label="Folder {{.Shown}}">{{range $i, $c := .Crumbs}}{{if $i}}<span class="sep">/</span>{{end}}<a href="/admin/access/{{$.Data.Alias}}?folder={{$c.Folder}}">{{$c.Name}}</a>{{end}}</h1>
+
+{{if .Unready}}
+<p class="empty">This repository is not available yet ({{.Unready}}), so its folders cannot be listed.</p>
+{{else if .Missing}}
+<p class="flash bad">This folder is not in the repository any more. Rules left on it grant nothing; clear them below.</p>
+{{end}}
+
+{{if .Children}}
+<h2>Folders inside</h2>
+<ul class="folders">
+  {{range .Children}}<li><a class="mono" href="/admin/access/{{$.Data.Alias}}?folder={{.Folder}}">{{.Name}}</a>{{if .HasRules}}<span class="mark" title="Rules are set here or deeper">rules inside</span>{{end}}</li>{{end}}
+</ul>
+{{end}}
+
+<h2>Who can open this folder</h2>
+<p class="lede">A level applies to this folder and everything under it, until a deeper folder says otherwise. A filled button is a rule set here; a dashed one is the level inherited from a folder above.</p>
+<table class="list access">
+  <thead><tr><th>Account</th><th>Level here</th><th>In effect</th></tr></thead>
+  <tbody>
+  {{range .Rows}}
+  <tr>
+    <td data-label="Account"><a href="/admin/users/{{.AccountID}}">{{.Email}}</a>{{if .Admin}} <span class="tag">administrator</span>{{end}}{{if .Disabled}} <span class="tag bad">disabled</span>{{end}}</td>
+    <td data-label="Level here">
+      <form class="levels" method="post" action="/admin/access/{{$.Data.Alias}}">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <input type="hidden" name="account" value="{{.AccountID}}">
+        <input type="hidden" name="folder" value="{{$.Data.Folder}}">
+        <button type="submit" name="level" value="inherit" class="lv inherit{{if not .Explicit}} on{{end}}" aria-pressed="{{if .Explicit}}false{{else}}true{{end}}">inherit</button>
+        <button type="submit" name="level" value="none" class="lv none{{if eq .Explicit "none"}} on{{else if and (not .Explicit) (eq .Effective "none") .Source}} ghost{{end}}" aria-pressed="{{if eq .Explicit "none"}}true{{else}}false{{end}}">none</button>
+        <button type="submit" name="level" value="read" class="lv read{{if eq .Explicit "read"}} on{{else if and (not .Explicit) (eq .Effective "read")}} ghost{{end}}" aria-pressed="{{if eq .Explicit "read"}}true{{else}}false{{end}}">read</button>
+        <button type="submit" name="level" value="write" class="lv write{{if eq .Explicit "write"}} on{{else if and (not .Explicit) (eq .Effective "write")}} ghost{{end}}" aria-pressed="{{if eq .Explicit "write"}}true{{else}}false{{end}}">write</button>
+      </form>
+    </td>
+    <td data-label="In effect"><span class="level {{.Effective}}">{{.Effective}}</span>
+      {{if .Explicit}}<span class="dim">set here</span>{{else if .Source}}<span class="dim">from <span class="mono">{{.Source}}</span></span>{{else}}<span class="dim">no rule applies</span>{{end}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}
+{{end}}

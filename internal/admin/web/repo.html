@@ -1,0 +1,70 @@
+{{define "content"}}
+{{with .Data}}
+<p class="back"><a href="/admin/repos">Repositories</a></p>
+<h1 class="path">{{.Alias}}</h1>
+<dl class="facts">
+  <dt>Status</dt><dd><span class="state s-{{.Status}}">{{.Status}}</span>{{if .Reason}}<span class="reason">{{.Reason}}</span>{{end}}</dd>
+  <dt>Remote</dt><dd class="mono wrap">{{if .URL}}{{.URL}}{{else}}local only{{end}}</dd>
+  <dt>Branch</dt><dd class="mono">{{.Branch}}</dd>
+  <dt>Last sync</dt><dd>{{when .LastSync}}</dd>
+  {{if .Unpushed}}<dt>Not pushed yet</dt><dd>{{.Unpushed}} commit(s)</dd>{{end}}
+  <dt>Credential</dt>
+  <dd>{{if eq .Credential "token"}}Access token{{if .Hint}} ending in <span class="mono">{{.Hint}}</span>{{end}}{{else if eq .Credential "ssh_key"}}SSH key <span class="mono wrap">{{.Fingerprint}}</span>{{else}}From the server environment{{end}}</dd>
+</dl>
+
+{{if .PublicKey}}
+<h2>Public key</h2>
+{{if eq .Status "key_pending"}}<p>Register this key with the Git host as a deploy key with write access, then connect. Nothing is contacted before you do.</p>{{else}}<p>This is the key the Git host knows this server by.</p>{{end}}
+<textarea id="pubkey" class="mono key" rows="3" readonly>{{.PublicKey}}</textarea>
+<p><button class="quiet" type="button" data-copy="pubkey">Copy key</button></p>
+{{end}}
+
+<div class="row">
+  {{if or (eq .Status "key_pending") (eq .Status "error")}}
+  <form method="post" action="/admin/repos/{{.Alias}}/connect"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit">{{if eq .Status "key_pending"}}The key is registered, connect{{else}}Try again{{end}}</button></form>
+  {{end}}
+  {{if or (eq .Status "ok") (eq .Status "offline") (eq .Status "conflict")}}
+  <form method="post" action="/admin/repos/{{.Alias}}/sync"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="quiet" type="submit">Sync now</button></form>
+  {{end}}
+  <a class="button quiet" href="/admin/access/{{.Alias}}">Access rules</a>
+</div>
+{{if eq .Status "conflict"}}<p class="hint">A merge with the remote needs a decision. An account with write access to every conflicting note resolves it from its assistant with kb_conflicts and kb_resolve_conflict.</p>{{end}}
+
+{{if ne .Credential "host"}}
+<h2>Replace the credential</h2>
+<form class="stack" method="post" action="/admin/repos/{{.Alias}}/credential">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  {{template "credential" "replace"}}
+  <button type="submit">Replace credential</button>
+</form>
+{{end}}
+
+<h2>Remove from this server</h2>
+<form class="stack" method="post" action="/admin/repos/{{.Alias}}/remove">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <p>This deletes the local clone, the index and every access rule for <span class="mono">{{.Alias}}</span>. The remote is not touched, and commits are pushed first.</p>
+  <label for="confirm">Type the alias to confirm</label>
+  <input id="confirm" class="mono" type="text" name="confirm" autocomplete="off" required>
+  <label class="choice"><input type="checkbox" name="discard" value="yes"> Remove even if some commits cannot be pushed</label>
+  <button class="danger" type="submit">Remove repository</button>
+</form>
+{{end}}
+{{end}}
+
+{{define "credential"}}
+<fieldset class="credential">
+  <legend>Credential</legend>
+  <label class="choice"><input type="radio" name="credential" value="token" checked> Access token, for an <span class="mono">https://</span> URL</label>
+  <div class="sub">
+    <label for="token-{{.}}">Token</label>
+    <input id="token-{{.}}" type="password" name="token" autocomplete="off">
+  </div>
+  <label class="choice"><input type="radio" name="credential" value="generate"> New SSH key made by this server</label>
+  <label class="choice"><input type="radio" name="credential" value="key"> My own SSH private key</label>
+  <div class="sub">
+    <label for="key-{{.}}">Private key</label>
+    <textarea id="key-{{.}}" class="mono" name="ssh_key" rows="5" autocomplete="off" spellcheck="false"></textarea>
+    <p class="hint">Keys protected by a passphrase are not supported.</p>
+  </div>
+</fieldset>
+{{end}}

@@ -45,6 +45,7 @@ const (
 	CodePatchFailed     = "patch_failed"
 	CodeUnsupportedFile = "unsupported_file"
 	CodeReadOnly        = "read_only"
+	CodeForbidden       = "forbidden"
 	CodeInvalidArgument = "invalid_argument"
 	CodeInternal        = "internal"
 	CodeNoRemote        = "no_remote"
